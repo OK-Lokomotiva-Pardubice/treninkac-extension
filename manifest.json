@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Treninkac Dashboard",
+  "version": "1.0.0",
+  "description": "Prehled trenikovych dat tymu Dorost LPU po cyklech a tydnech",
+  "permissions": ["storage", "scripting", "tabs"],
+  "host_permissions": [
+    "https://treninkac-api.orientacnisporty.cz/*",
+    "https://treninkac.orientacnisporty.cz/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Treninkac Dashboard"
+  },
+  "web_accessible_resources": [{
+    "resources": ["dashboard.html"],
+    "matches": ["<all_urls>"]
+  }]
+}

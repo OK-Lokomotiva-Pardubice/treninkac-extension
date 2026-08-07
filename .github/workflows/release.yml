@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from manifest
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build zip
+        run: |
+          zip -r treninkac-dashboard-${{ steps.version.outputs.version }}.zip \
+            manifest.json \
+            background.js \
+            dashboard.html \
+            popup.js \
+            -x "*.git*"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Treninkac Dashboard v${{ steps.version.outputs.version }}"
+          body: |
+            ## Instalace
+
+            1. Stáhněte soubor `treninkac-dashboard-${{ steps.version.outputs.version }}.zip`
+            2. Rozbalte zip do libovolné složky
+            3. V Chrome otevřete `chrome://extensions`, zapněte **Režim pro vývojáře** a klikněte na **Načíst rozbalené**
+            4. Vyberte rozbalenou složku
+
+            Podrobný návod: viz [README](https://github.com/${{ github.repository }}/blob/main/README.md)
+          files: treninkac-dashboard-${{ steps.version.outputs.version }}.zip
+          draft: false
+          prerelease: false

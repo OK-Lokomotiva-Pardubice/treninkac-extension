@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<title>Tr&#233;nink&#225;&#269; Dashboard</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #0C1220;
+  --surface:     #141E30;
+  --elevated:    #1A2640;
+  --border-sub:  #1C2E48;
+  --border:      #253858;
+  --accent:      #05D9A4;
+  --accent-dim:  rgba(5,217,164,0.10);
+  --accent-glow: rgba(5,217,164,0.18);
+  --text:        #CDD8EE;
+  --text-sec:    #6B7FA0;
+  --text-muted:  #3F526E;
+  --alert:       #FF6B6B;
+  --race:        #7B9EFF;
+  --sick:        #FFBA5A;
+  --val-dz:      #7FBEEE;
+  --val-fa:      #A8D5B5;
+  --cycle-row:   #111C2C;
+  --week-row:    #0E1624;
+}
+
+html, body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Setup */
+#setup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 18px;
+  padding: 40px;
+}
+
+#setup .logo-mark {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+#setup h1 {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.4px;
+}
+
+#setup p {
+  color: var(--text-sec);
+  text-align: center;
+  max-width: 420px;
+  line-height: 1.65;
+  font-size: 13px;
+}
+
+#setup p code {
+  color: var(--accent);
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 11.5px;
+}
+
+.input-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  max-width: 600px;
+}
+
+input[type="text"] {
+  flex: 1;
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11.5px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+button {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #081018;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 20px;
+  transition: opacity 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+
+button:hover { opacity: 0.88; box-shadow: 0 0 14px var(--accent-glow); }
+button:active { opacity: 0.72; }
+
+button.ghost {
+  background: var(--elevated);
+  color: var(--text-sec);
+  border: 1px solid var(--border);
+  font-weight: 500;
+}
+button.ghost:hover { color: var(--text); border-color: var(--accent); box-shadow: none; }
+
+.setup-error {
+  color: var(--alert);
+  font-size: 12px;
+  min-height: 18px;
+}
+
+/* App shell */
+#app {
+  display: none;
+  flex-direction: column;
+  height: 100vh;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-sub);
+  flex-shrink: 0;
+}
+
+.h-logo {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.h-sep { width: 1px; height: 14px; background: var(--border); }
+
+.h-team { font-size: 12px; color: var(--text-sec); }
+
+header .flex1 { flex: 1; }
+
+.h-nav-link {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sec);
+  text-decoration: none;
+  padding: 3px 8px;
+  border-radius: 5px;
+  transition: background 0.15s, color 0.15s;
+}
+.h-nav-link:hover, .h-nav-link.active { background: var(--hover); color: var(--text); }
+
+.h-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 5px 12px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.h-btn:hover { color: var(--text-sec); background: var(--elevated); box-shadow: none; }
+
+/* Body split */
+.body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Sidebar */
+aside {
+  width: 220px;
+  background: var(--surface);
+  border-right: 1px solid var(--border-sub);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.aside-label {
+  padding: 12px 14px 8px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.athlete-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.athlete-list::-webkit-scrollbar { width: 3px; }
+.athlete-list::-webkit-scrollbar-track { background: transparent; }
+.athlete-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.ath-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 13px;
+  cursor: pointer;
+  transition: background 0.1s;
+  user-select: none;
+  position: relative;
+}
+
+.ath-item:hover { background: var(--elevated); }
+.ath-item.active { background: var(--accent-dim); }
+
+.ath-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 4px; bottom: 4px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+.ath-avatar {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  background: var(--elevated);
+  border: 1.5px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 800;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.ath-item.active .ath-avatar { border-color: var(--accent); color: var(--accent); }
+
+.ath-name {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ath-item.active .ath-name { color: var(--accent); }
+
+.nezp-badge {
+  flex-shrink: 0;
+  background: var(--alert);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 6px;
+  min-width: 20px;
+  text-align: center;
+}
+
+.nezp-badge.zero    { background: var(--border);     color: var(--text-muted); font-weight: 500; }
+.nezp-badge.loading { background: var(--border-sub); color: var(--text-muted); font-weight: 400; }
+
+/* Main panel */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.main-head {
+  padding: 13px 24px 11px;
+  border-bottom: 1px solid var(--border-sub);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.ath-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.stat-pills { display: flex; gap: 7px; flex-wrap: wrap; }
+
+.pill {
+  background: var(--elevated);
+  border: 1px solid var(--border-sub);
+  border-radius: 4px;
+  font-size: 11.5px;
+  padding: 3px 9px;
+  color: var(--text-sec);
+  font-variant-numeric: tabular-nums;
+}
+
+.pill strong { color: var(--text); font-weight: 600; }
+
+.pill.alert {
+  border-color: rgba(255,107,107,0.3);
+  background: rgba(255,107,107,0.07);
+}
+.pill.alert strong { color: var(--alert); }
+
+/* Table */
+.table-wrap {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.table-wrap::-webkit-scrollbar { width: 5px; height: 5px; }
+.table-wrap::-webkit-scrollbar-track { background: transparent; }
+.table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+thead tr {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 2;
+}
+
+thead th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 8px 16px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-sub);
+}
+
+thead th.col-cy { text-align: left; min-width: 100px; }
+thead th.col-wk { text-align: left; min-width: 60px; }
+
+.cr {
+  cursor: pointer;
+  background: var(--cycle-row);
+  border-top: 1px solid var(--border-sub);
+  transition: background 0.1s;
+  user-select: none;
+}
+
+.cr:hover { background: #172032; }
+
+.cr td {
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cy-cell { display: flex; align-items: center; gap: 8px; }
+
+.chevron {
+  display: inline-block;
+  font-size: 8px;
+  color: var(--text-muted);
+  transition: transform 0.18s ease;
+  width: 10px;
+  text-align: center;
+}
+
+.cr.open .chevron { transform: rotate(90deg); }
+
+.cy-tag {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: 0.05em;
+}
+
+.cr.has-nezp .cy-tag { color: var(--alert); }
+.wr.has-nezp .wk-cell { color: var(--alert); }
+
+.cy-dates {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.cy-copy {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.cr:hover .cy-copy { opacity: 1; }
+.cy-copy:hover { color: var(--accent); }
+
+.wr { display: none; background: var(--week-row); }
+.wr.show { display: table-row; }
+
+.wr td {
+  padding: 5px 16px;
+  font-size: 12px;
+  color: var(--text-sec);
+  border-bottom: 1px solid rgba(28,46,72,0.5);
+}
+
+.wk-cell {
+  padding-left: 20px !important;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.wk-chevron {
+  display: inline-block;
+  font-size: 7px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+  width: 10px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.wr.expandable { cursor: pointer; }
+.wr.expandable:hover td { background: rgba(255,255,255,0.02); }
+.wr.wk-open .wk-chevron { transform: rotate(90deg); }
+
+/* Activity rows */
+.ar { display: none; background: #090E18; }
+.ar.show { display: table-row; }
+
+.ar > td {
+  padding: 4px 8px 4px 0;
+  border-bottom: 1px solid rgba(22,36,58,0.7);
+  vertical-align: middle;
+}
+
+/* Day-start: stronger top border to visually separate days */
+.ar.day-start.show + .ar.show:not(.day-start),
+.ar.show.day-start {
+  border-top: 1px solid rgba(37,56,88,0.8);
+}
+
+.ar-date-cell {
+  padding-left: 30px !important;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  min-width: 72px;
+}
+
+.ar-detail-cell {
+  padding-left: 4px !important;
+}
+
+.ar-detail-cell > * { vertical-align: middle; }
+
+.ar-name {
+  font-size: 12.5px;
+  color: var(--text);
+  font-weight: 500;
+  margin-right: 6px;
+  text-decoration: none;
+}
+.ar-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.sport-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--elevated);
+  border: 1px solid var(--border-sub);
+  color: var(--text-sec);
+  white-space: nowrap;
+  margin-right: 6px;
+}
+
+.sport-tag.nezp {
+  background: rgba(255,107,107,0.08);
+  border-color: rgba(255,107,107,0.25);
+  color: var(--alert);
+}
+
+.ar-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ar-beh, .ar-zat {
+  font-size: 12px;
+  white-space: nowrap;
+  padding-right: 16px !important;
+}
+
+td.num { text-align: right; }
+
+.c-dz  { color: var(--val-dz); }
+.c-fa  { color: var(--val-fa); }
+.c-za  { color: var(--race); }
+.c-ne  { color: var(--sick); }
+.c-beh { color: var(--text); }
+.c-zat { color: var(--text); }
+.dim   { color: var(--text-muted); }
+
+.state-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.spinner {
+  width: 24px; height: 24px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.err-txt { color: var(--alert); font-size: 13px; }
+
+/* ── Totals page ─────────────────────────────────────────── */
+.totals-wrap { padding: 24px 28px; overflow-x: auto; }
+.totals-wrap h2 { font-size: 15px; font-weight: 700; margin-bottom: 16px; }
+.totals-table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.totals-table th, .totals-table td { padding: 7px 12px; border-bottom: 1px solid var(--border-sub); white-space: nowrap; }
+.totals-table th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); cursor: pointer; user-select: none; text-align: right; }
+.totals-table th:first-child { text-align: left; }
+.totals-table th.sort-asc::after  { content: ' ▲'; }
+.totals-table th.sort-desc::after { content: ' ▼'; }
+.totals-table td { text-align: right; font-variant-numeric: tabular-nums; }
+.totals-table td:first-child { text-align: left; font-weight: 600; }
+.totals-table tr:hover td { background: var(--hover); }
+.totals-loading { padding: 40px 28px; color: var(--text-muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <div class="logo-mark">Tr&#233;nink&#225;&#269;</div>
+  <h1>Dashboard</h1>
+  <p>
+    Vlo&#382;te JWT token z <code>localStorage.trainee.token</code>, nebo klikn&#283;te
+    <em>Na&#269;&#237;st z treninkac</em> pokud m&#225;te otev&#345;enou z&#225;lo&#382;ku s tr&#233;nink&#225;&#269;em.
+  </p>
+  <div class="input-row">
+    <input type="text" id="tok-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9&#8230;" />
+    <button class="ghost" id="btn-extract">Na&#269;&#237;st z treninkac</button>
+    <button id="btn-connect">P&#345;ipojit</button>
+  </div>
+  <div class="setup-error" id="setup-err"></div>
+</div>
+
+<div id="app">
+  <header>
+    <span class="h-logo">Tr&#233;nink&#225;&#269;</span>
+    <div class="h-sep"></div>
+    <span class="h-team">Dorost LPU</span>
+    <div class="h-sep"></div>
+    <a class="h-nav-link" id="nav-totals" href="#">Celkov&#233; sou&#269;ty</a>
+    <div class="flex1"></div>
+    <button class="h-btn" id="btn-reset">&#8635; Zm&#283;nit token</button>
+  </header>
+  <div class="body">
+    <aside>
+      <div class="aside-label">Sportovci</div>
+      <div class="athlete-list" id="ath-list"></div>
+    </aside>
+    <main id="main">
+      <div class="state-box">&#8592; Vyberte sportovce</div>
+    </main>
+  </div>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
