@@ -26,7 +26,7 @@ Endpoints used:
   GET /team/detail/117/athlete/:uid/training-log           → individual activity log
 ```
 
-Validity period: `2025-10-27` – `2026-10-25` (activities outside this range are filtered out).
+Training year: `2025-10-27` – `2026-10-25` (activities outside this range are filtered out).
 
 ### Getting the token
 
@@ -78,18 +78,20 @@ For the other two endpoints substitute the URL; no request body is needed for an
 
 **`activsByWeek`** — keyed `"${cycleNum}-${weekNum}"` → activity array.
 
-**`cycleData`** — array of cycle objects:
+**`cycleData`** — array of cycle objects, one per calendar cycle that has any data:
 ```js
 {
-  num, extra,        // extra=true for cycles built from unmatched activities
+  num,               // 1–13
+  mon, sun,          // UTC Dates — first Monday / last Sunday of the cycle
   hasNezp,           // true if any week in cycle has nezp activities
   DZ, FA, ZA, NE, runDist, zatSec,
-  weeks: [{ week, isoYear, hasNezp, DZ, FA, ZA, NE, runDist, zatSec }]
+  weeks: [{ week, isoYear, mon, sun, hasNezp, DZ, FA, ZA, NE, runDist, zatSec }]
 }
 ```
+`week` is the ISO week number (the label shown as `T44`, and the key the plan API uses); `mon`/`sun` are the authoritative dates.
 
-**Planned cycles** — weeks come from the plan API; stats = plan stats + nezp activity contributions.  
-**Extra cycles** — unmatched activities grouped into 4-consecutive-ISO-week blocks, numbered C[n+1], C[n+2], …; stats computed entirely from activities.
+**Planned week** (the plan API has a row for its ISO week) — stats = plan stats + nezp activity contributions (processed activities are already inside the plan stats).  
+**Unplanned week** — no plan row, so stats are computed entirely from that week's activities.
 
 ### Activity fields (normalised inside `buildCache`)
 ```js
@@ -104,10 +106,20 @@ For the other two endpoints substitute the URL; no request body is needed for an
 }
 ```
 
-### Year resolution
-ISO week numbers are shared between years (week 1–43 = 2026, week 44–52 = 2025).  
-`resolveYear(weekNum)` inside `buildCache` votes using actual activity dates; falls back to: `week >= 44 → 2025`, else `2026`.  
-Each week object stores `isoYear` so rendering doesn't need to call `resolveYear`.
+### Cycle calendar — the one rule that matters
+Cycles are **driven by the calendar, never by the athlete's activities or by the API's own cycle grouping**
+(that grouping drifts per athlete whenever plan weeks are missing, which is why it is discarded).
+
+* The training year starts Monday `SEASON_START` (`2025-10-27`, ISO 2025-W44).
+* Every cycle spans exactly **4 consecutive weeks**, always all 4 — empty weeks included.
+* **13 cycles = 52 weeks** per training year; after C13 a new training year begins again at C1.
+
+So C1 = 27.10.2025–23.11.2025, C9 = 08.06.2026–05.07.2026, C13 = 28.09.2026–25.10.2026 — identical for every athlete.
+
+Internally everything is keyed by the **absolute week index** `wi` (0–51) since `SEASON_START`:
+`weekIndexOf(dateStr)` → `wi`, `weekMonday(wi)` → UTC Date, cycle index = `Math.floor(wi / WEEKS_PER_CYCLE)`,
+cycle number = `(cycleIdx % CYCLES_PER_YEAR) + 1`. ISO week numbers are only labels and plan-API keys,
+resolved via `isoWeekOfTs(ts)`; no year guessing is involved.
 
 ## Key functions in `popup.js`
 
@@ -118,7 +130,9 @@ Each week object stores `isoYear` so rendering doesn't need to call `resolveYear
 | `selectAthlete(uid)` | Load (if needed) + render athlete detail |
 | `renderMain(uid)` | Render cycle/week/activity table for athlete |
 | `renderTotals()` | Load all athletes + render sortable totals table |
-| `isoWeekMonday(year, week)` | Returns UTC Date of Monday of ISO week (pure timestamp arithmetic) |
+| `weekIndexOf(dateStr)` | Absolute week index (0-based) of a `YYYY-MM-DD` date since `SEASON_START` |
+| `weekMonday(wi)` | UTC Date of the Monday of absolute week index `wi` |
+| `isoWeekOfTs(ts)` | `{ year, week }` — ISO week number + ISO year of a UTC timestamp |
 | `fmtDateObj(d)` | Format a Date object as `DD.MM.YYYY` (UTC) |
 | `fmtDate(dateStr)` | Format a `YYYY-MM-DD` string as `Po 27.10.` (Czech day name + short date) — **used for activity rows** |
 | `buildActRows(acts, isOpen)` | Render `<tr>` rows for individual activities |
@@ -159,7 +173,8 @@ state = {
 
 - Cycle/week drill-down with expandable activity rows
 - Activity name links to detail page on treninkac.orientacnisporty.cz
-- Unmatched activities assigned to extra cycles (C[n+1], …), shown in same structure
+- Cycles fixed by the calendar (4 weeks each, 13 per training year) — same boundaries for every athlete
+- Activities in weeks with no training plan still counted, in their calendar cycle
 - Nezpracované (unprocessed) activities counted into week/cycle sums
 - Red highlighting on cycle/week names when nezp activities present
 - Date range (DD.MM.YYYY – DD.MM.YYYY) shown next to cycle and week names

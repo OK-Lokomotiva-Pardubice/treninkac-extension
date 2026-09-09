@@ -29,13 +29,38 @@ function sportName(sport) {
   return SPORT[key] || sport;
 }
 
-/* Returns the Monday of ISO week `week` in `year` as a UTC Date */
-function isoWeekMonday(year, week) {
-  const DAY = 86400000;
-  const jan4ts = Date.UTC(year, 0, 4);
-  const dow    = (new Date(jan4ts)).getUTCDay() || 7;
-  const week1monday = jan4ts - (dow - 1) * DAY;
-  return new Date(week1monday + (week - 1) * 7 * DAY);
+/* ── Training-year calendar ────────────────────────────────────────
+   Cycles are driven by the calendar, never by the athlete's activities:
+   the training year starts on SEASON_START (a Monday), every cycle spans
+   exactly 4 consecutive weeks, and after 13 cycles (= 52 weeks) a new
+   training year begins again at C1. */
+const SEASON_START    = '2025-10-27';
+const SEASON_END      = '2026-10-25';
+const WEEKS_PER_CYCLE = 4;
+const CYCLES_PER_YEAR = 13;
+const DAY_MS          = 86400000;
+const WEEK_MS         = 7 * DAY_MS;
+const SEASON_START_TS = Date.parse(SEASON_START + 'T00:00:00Z');
+
+/* Absolute week index (0-based) of a YYYY-MM-DD date since SEASON_START */
+function weekIndexOf(dateStr) {
+  const ts = Date.UTC(+dateStr.slice(0, 4), +dateStr.slice(5, 7) - 1, +dateStr.slice(8, 10));
+  return Math.floor((ts - SEASON_START_TS) / WEEK_MS);
+}
+
+/* Monday (UTC Date) of an absolute week index */
+function weekMonday(wi) {
+  return new Date(SEASON_START_TS + wi * WEEK_MS);
+}
+
+const SEASON_WEEKS = weekIndexOf(SEASON_END) + 1;   // 52
+
+/* ISO week number + ISO year of a UTC timestamp */
+function isoWeekOfTs(ts) {
+  const dow  = (new Date(ts)).getUTCDay() || 7;
+  const thu  = ts + (4 - dow) * DAY_MS;             // Thursday of that week
+  const year = (new Date(thu)).getUTCFullYear();
+  return { year, week: Math.floor((thu - Date.UTC(year, 0, 1)) / DAY_MS / 7) + 1 };
 }
 
 function fmtDateObj(d) {
@@ -59,33 +84,6 @@ function fmtTime(sec) {
 function fmtKm(m) {
   if (!m) return null;
   return (m / 1000).toFixed(1);
-}
-
-/* Return ISO week number AND ISO year (important: year can differ from calendar year) */
-function getISOWeekAndYear(dateStr) {
-  const d   = new Date(dateStr);
-  const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = utc.getUTCDay() || 7;
-  utc.setUTCDate(utc.getUTCDate() + 4 - day);
-  const isoYear  = utc.getUTCFullYear();
-  const yearStart = new Date(Date.UTC(isoYear, 0, 1));
-  const isoWeek  = Math.ceil((((utc - yearStart) / 86400000) + 1) / 7);
-  return { year: isoYear, week: isoWeek };
-}
-
-/* Sort an array of ISO week numbers in temporal (calendar) order.
-   Detects year-wrap by finding the largest gap between sorted values.
-   Example: [1,2,3,51,52] → [51,52,1,2,3] */
-function temporalSortWeeks(weekNums) {
-  if (weekNums.length <= 1) return [...weekNums];
-  const sorted = [...weekNums].sort((a, b) => a - b);
-  let maxGap = 0, wrapIdx = -1;
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const gap = sorted[i + 1] - sorted[i];
-    if (gap > maxGap) { maxGap = gap; wrapIdx = i; }
-  }
-  if (maxGap < 10 || wrapIdx === -1) return sorted;
-  return [...sorted.slice(wrapIdx + 1), ...sorted.slice(0, wrapIdx + 1)];
 }
 
 const DAYS_CZ = ['Ne', 'Po', 'Út', 'St', 'Čt', 'Pá', 'So'];
@@ -117,9 +115,7 @@ async function apiFetch(path) {
 
 function buildCache(detailRaw, logRaw) {
   const d    = detailRaw.results.data;
-  const co   = d.cycleOverview      || {};
   const wo   = d.weekOverview       || {};
-  const sbc  = d.sumByCycle         || {};
   const sbw  = d.sumByWeeks         || {};
   const sick = d.sickDaysInCycles   || [];
 
@@ -129,60 +125,49 @@ function buildCache(detailRaw, logRaw) {
     _date: (e.startDate || e.date || '').slice(0, 10)
   })).filter(e => e._date);
 
-  // Restrict to team validity period to avoid historical data from other seasons
-  const VALIDITY_START = '2025-10-27';
-  const VALIDITY_END   = '2026-10-25';
+  // Restrict to the training year to avoid historical data from other seasons
   const logEntries = allLogEntries.filter(
-    e => e._date >= VALIDITY_START && e._date <= VALIDITY_END
+    e => e._date >= SEASON_START && e._date <= SEASON_END
   );
 
-  /* ── Build year-aware week lookup ───────────────────────── */
-  /* Within one validity period (≈52 weeks) each ISO week number is unique:
-     weeks 44–52 belong to 2025, weeks 1–43 belong to 2026 — no repeats.
-     So we derive the year for each week directly from the activity dates
-     rather than trying to infer it from week-number sequences. */
+  /* ── Plan data, re-keyed by ISO week ─────────────────────
+     The API groups plan weeks into cycles of its own, and that grouping
+     drifts per athlete whenever weeks are missing. Cycles here come from
+     the calendar instead, so the API's cycle numbers are dropped and only
+     the ISO week number of each plan row is kept. */
+  const planWeek = {};                      // isoWeek → weekOverview row
+  for (const rows of Object.values(wo))
+    for (const r of rows) planWeek[r.week] = r;
 
-  const sortedCycles = Object.keys(wo).map(Number).sort((a, b) => a - b);
+  const planSport = {};                     // isoWeek → sumByWeeks rows
+  for (const rows of Object.values(sbw))
+    for (const r of rows) (planSport[r.week] = planSport[r.week] || []).push(r);
 
-  // Count how many activities land in each (isoYear, isoWeek) combination
-  const weekYearCounts = {};
-  for (const e of logEntries) {
-    const { year, week } = getISOWeekAndYear(e._date);
-    if (!weekYearCounts[week]) weekYearCounts[week] = {};
-    weekYearCounts[week][year] = (weekYearCounts[week][year] || 0) + 1;
+  const planSick = {};                      // isoWeek → sick days
+  for (const c of sick)
+    for (const w of (c.weeks || []))
+      planSick[w.week] = (planSick[w.week] || 0) + (w.sickdays || 0);
+
+  /* ── Season calendar ─────────────────────────────────────
+     Week `wi` is the (wi+1)-th week of the training year; its ISO week
+     number is only a label (and the key the plan API uses). */
+  const weekMeta    = [];                   // wi → { week, isoYear, mon, sun }
+  const wiOfIsoWeek = {};                   // isoWeek → wi
+  for (let wi = 0; wi < SEASON_WEEKS; wi++) {
+    const monTs = SEASON_START_TS + wi * WEEK_MS;
+    const { year, week } = isoWeekOfTs(monTs);
+    weekMeta[wi]       = { week, isoYear: year, mon: new Date(monTs), sun: new Date(monTs + 6 * DAY_MS) };
+    wiOfIsoWeek[week]  = wi;
   }
 
-  // For weeks that have no activities (sick/rest weeks), fall back to the
-  // validity-period rule: week ≤ 43 → 2026, week ≥ 44 → 2025
-  const VALIDITY_YEAR = getISOWeekAndYear(VALIDITY_START).year; // 2025
-  function resolveYear(weekNum) {
-    const yCounts = weekYearCounts[weekNum];
-    if (yCounts) {
-      return Number(Object.entries(yCounts).sort((a, b) => b[1] - a[1])[0][0]);
-    }
-    return weekNum >= 44 ? VALIDITY_YEAR : VALIDITY_YEAR + 1;
-  }
-
-  // weekLookup: `${isoYear}-${weekNum}` → { cycle, week }
-  const weekLookup = {};
-  for (const c of sortedCycles) {
-    const rawWeeks = [...new Set((wo[c] || []).map(w => w.week))];
-    for (const weekNum of rawWeeks) {
-      const year = resolveYear(weekNum);
-      weekLookup[`${year}-${weekNum}`] = { cycle: c, week: weekNum };
-    }
-  }
-
-  /* ── Group training-log activities by (cycle, week) ─────── */
-  const activsByWeek    = {};   // `${cycle}-${week}` → [activity]
-  const unmatchedByWeek = {};   // `${isoYear}-W${isoWeek}` → [activity]
+  /* ── Group training-log activities by week ──────────────── */
+  const actsByWi = {};                      // wi → [activity]
 
   for (const e of logEntries) {
-    const { year: actYear, week: actWeek } = getISOWeekAndYear(e._date);
-    const match = weekLookup[`${actYear}-${actWeek}`];
+    const wi    = weekIndexOf(e._date);
     const nezp  = e.time === null && e.movingTime != null;
     const sport = e.sport || e.kind || null;
-    const act   = {
+    (actsByWi[wi] = actsByWi[wi] || []).push({
       id:      e.activityId,
       name:    e.name || '(bez názvu)',
       sport,
@@ -194,101 +179,69 @@ function buildCache(detailRaw, logRaw) {
       isSick:  !!(e.isSick || e.sick || e.sickDay),
       dist:    e.distance || e.movingDistance || 0,
       movTime: e.movingTime || 0
-    };
-
-    if (match) {
-      const key = `${match.cycle}-${match.week}`;
-      (activsByWeek[key] = activsByWeek[key] || []).push(act);
-    } else {
-      const wkKey = `${actYear}-W${String(actWeek).padStart(2, '0')}`;
-      (unmatchedByWeek[wkKey] = unmatchedByWeek[wkKey] || []).push(act);
-    }
+    });
   }
 
-  // Sort by date within each week
-  for (const key of Object.keys(activsByWeek))    activsByWeek[key].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-  for (const key of Object.keys(unmatchedByWeek)) unmatchedByWeek[key].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  for (const wi of Object.keys(actsByWi))
+    actsByWi[wi].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
   const nezp = logEntries.filter(e => e.time === null && e.movingTime != null).length;
 
-  /* ── Build cycleData (planned cycles) ───────────────────── */
-  const cycleNums = Object.keys(co).map(Number).sort((a, b) => a - b);
+  /* ── Cycles that carry any data (plan rows or activities) ── */
+  const activeCycles = new Set();
+  for (const isoWeek of Object.keys(planWeek)) {
+    const wi = wiOfIsoWeek[isoWeek];
+    if (wi != null) activeCycles.add(Math.floor(wi / WEEKS_PER_CYCLE));
+  }
+  for (const wi of Object.keys(actsByWi))
+    activeCycles.add(Math.floor(Number(wi) / WEEKS_PER_CYCLE));
 
-  const cycleData = cycleNums.map(c => {
-    const coRow  = co[c]?.[0] || {};
-    const sbcArr = sbc[c]     || [];
-    const sickC  = sick.find(s => s.cycle === c) || {};
-    const woArr  = wo[c]      || [];
-    const sbwArr = sbw[c]     || [];
-    const weekNums = [...new Set(woArr.map(w => w.week))].sort((a, b) => {
-      const ya = resolveYear(a), yb = resolveYear(b);
-      return ya !== yb ? ya - yb : a - b;
-    });
+  /* ── Build cycleData ─────────────────────────────────────
+     Every cycle spans its full 4 calendar weeks, whether or not the
+     athlete has a plan or any activity in them. */
+  const activsByWeek = {};                  // `${cycleNum}-${isoWeek}` → [activity]
 
-    const weeks = weekNums.map(w => {
-      const we     = woArr.find(x => x.week === w) || {};
-      const wSp    = sbwArr.filter(x => x.week === w);
-      const sickW  = (sickC.weeks || []).find(x => x.week === w) || {};
-      const acts   = activsByWeek[`${c}-${w}`] || [];
-      const nezpA  = acts.filter(a => a.nezp);
-      return {
-        week:     w,
-        isoYear:  resolveYear(w),
-        hasNezp:  nezpA.length > 0,
-        DZ:       (we.day_load       || 0) + new Set(nezpA.map(a => a.date)).size,
-        FA:       (we.activity_count || 0) + nezpA.length,
-        ZA:       (we.raceCount      || 0) + nezpA.filter(a => a.isRace).length,
-        NE:       (sickW.sickdays    || 0) + nezpA.filter(a => a.isSick).length,
-        runDist:  wSp.filter(e => e.kind === 'run').reduce((s, e) => s + (e.distance || 0), 0)
-                  + nezpA.reduce((s, a) => s + a.dist, 0),
-        zatSec:   wSp.reduce((s, e) => s + (e.time || 0), 0)
-                  + nezpA.reduce((s, a) => s + a.movTime, 0)
-      };
-    });
+  const cycleData = [...activeCycles].sort((a, b) => a - b).map(ci => {
+    const num = (ci % CYCLES_PER_YEAR) + 1;
+    const weeks = [];
 
+    for (let k = 0; k < WEEKS_PER_CYCLE; k++) {
+      const meta = weekMeta[ci * WEEKS_PER_CYCLE + k];
+      if (!meta) break;                     // past the end of the training year
+      const acts  = actsByWi[ci * WEEKS_PER_CYCLE + k] || [];
+      const nezpA = acts.filter(a => a.nezp);
+      activsByWeek[`${num}-${meta.week}`] = acts;
+
+      // A planned week already counts its processed activities in the plan
+      // stats, so only nezp ones are added. An unplanned week has no plan
+      // stats at all, so every activity in it counts.
+      const pw      = planWeek[meta.week];
+      const planned = pw != null;
+      const ps      = planSport[meta.week] || [];
+      const add     = planned ? nezpA : acts;
+
+      weeks.push({
+        week:    meta.week,
+        isoYear: meta.isoYear,
+        mon:     meta.mon,
+        sun:     meta.sun,
+        hasNezp: nezpA.length > 0,
+        DZ:      (planned ? (pw.day_load       || 0) : 0) + new Set(add.map(a => a.date)).size,
+        FA:      (planned ? (pw.activity_count || 0) : 0) + add.length,
+        ZA:      (planned ? (pw.raceCount      || 0) : 0) + add.filter(a => a.isRace).length,
+        NE:      (planned ? (planSick[meta.week] || 0) : 0) + add.filter(a => a.isSick).length,
+        runDist: (planned ? ps.filter(e => e.kind === 'run').reduce((s, e) => s + (e.distance || 0), 0) : 0)
+                 + add.reduce((s, a) => s + a.dist, 0),
+        zatSec:  (planned ? ps.reduce((s, e) => s + (e.time || 0), 0) : 0)
+                 + add.reduce((s, a) => s + a.movTime, 0)
+      });
+    }
+
+    const mon = weekMonday(ci * WEEKS_PER_CYCLE);
     return {
-      num:      c,
-      hasNezp:  weeks.some(w => w.hasNezp),
-      DZ:       weeks.reduce((s, w) => s + w.DZ, 0),
-      FA:       weeks.reduce((s, w) => s + w.FA, 0),
-      ZA:       weeks.reduce((s, w) => s + w.ZA, 0),
-      NE:       weeks.reduce((s, w) => s + w.NE, 0),
-      runDist:  weeks.reduce((s, w) => s + w.runDist, 0),
-      zatSec:   weeks.reduce((s, w) => s + w.zatSec, 0),
-      weeks
-    };
-  });
-
-  /* ── Append extra cycles from unmatched weeks (4 weeks each) */
-  const unmatchedWkKeys = Object.keys(unmatchedByWeek).sort();
-  const lastCycleNum    = cycleNums.length ? Math.max(...cycleNums) : 0;
-
-  for (let i = 0; i < unmatchedWkKeys.length; i += 4) {
-    const group    = unmatchedWkKeys.slice(i, i + 4);
-    const cycleNum = lastCycleNum + Math.floor(i / 4) + 1;
-
-    const weeks = group.map(wkKey => {
-      const acts    = unmatchedByWeek[wkKey];
-      const [wkYear, wkW] = wkKey.split('-W');
-      const weekNum = parseInt(wkW, 10);
-      const isoYear = parseInt(wkYear, 10);
-      activsByWeek[`${cycleNum}-${weekNum}`] = acts;
-      return {
-        week:    weekNum,
-        isoYear,
-        hasNezp: acts.some(a => a.nezp),
-        DZ:      new Set(acts.map(a => a.date)).size,
-        FA:      acts.length,
-        ZA:      acts.filter(a => a.isRace).length,
-        NE:      acts.filter(a => a.isSick).length,
-        runDist: acts.reduce((s, a) => s + a.dist, 0),
-        zatSec:  acts.reduce((s, a) => s + a.movTime, 0)
-      };
-    });
-
-    cycleData.push({
-      num:     cycleNum,
-      extra:   true,
+      num,
+      mon,
+      sun:     new Date(mon.getTime() + (WEEKS_PER_CYCLE * 7 - 1) * DAY_MS),
       hasNezp: weeks.some(w => w.hasNezp),
       DZ:      weeks.reduce((s, w) => s + w.DZ, 0),
       FA:      weeks.reduce((s, w) => s + w.FA, 0),
@@ -297,8 +250,8 @@ function buildCache(detailRaw, logRaw) {
       runDist: weeks.reduce((s, w) => s + w.runDist, 0),
       zatSec:  weeks.reduce((s, w) => s + w.zatSec, 0),
       weeks
-    });
-  }
+    };
+  });
 
   return { cycleData, nezp, activsByWeek };
 }
@@ -415,9 +368,7 @@ function renderMain(uid) {
       const actRows = buildActRows(acts, cycOpen && wkOpen);
 
       const hasActs = acts.length > 0;
-      const wkMon = isoWeekMonday(w.isoYear, w.week);
-      const wkSun = new Date(wkMon.getTime() + 6 * 86400000);
-      const wkDateRange = `<span class="cy-dates">${fmtDateObj(wkMon)} &#x2013; ${fmtDateObj(wkSun)}</span>`;
+      const wkDateRange = `<span class="cy-dates">${fmtDateObj(w.mon)} &#x2013; ${fmtDateObj(w.sun)}</span>`;
       return `
         <tr class="wr ${cycOpen ? 'show' : ''} ${hasActs ? 'expandable' : ''} ${wkOpen ? 'wk-open' : ''} ${w.hasNezp ? 'has-nezp' : ''}"
             data-wk="${wkKey}">
@@ -435,11 +386,7 @@ function renderMain(uid) {
         ${actRows}`;
     }).join('');
 
-    const firstW  = c.weeks[0];
-    const lastW   = c.weeks[c.weeks.length - 1];
-const dateFrom = firstW ? fmtDateObj(isoWeekMonday(firstW.isoYear, firstW.week)) : '';
-    const dateTo   = lastW  ? (() => { const s = isoWeekMonday(lastW.isoYear, lastW.week); s.setUTCDate(s.getUTCDate() + 6); return fmtDateObj(s); })() : '';
-    const dateRange = dateFrom ? `<span class="cy-dates">${dateFrom} – ${dateTo}</span>` : '';
+    const dateRange = `<span class="cy-dates">${fmtDateObj(c.mon)} – ${fmtDateObj(c.sun)}</span>`;
 
     const copyTsv = [
       c.DZ,

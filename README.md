@@ -74,7 +74,7 @@ Nad tabulkou jsou zobrazeny celkové součty za sezónu: počet cyklů, trénink
 
 ### Tabulka cyklů a týdnů
 
-Data jsou členěna do **tréninkových cyklů** (C1, C2, …). Každý cyklus obsahuje 4 týdny. Nezařazené aktivity (mimo plánované cykly) jsou automaticky přiřazeny do dalších cyklů (C*n*+1, C*n*+2, …).
+Data jsou členěna do **tréninkových cyklů** (C1–C13). Cykly jsou dané kalendářem, ne aktivitami sportovce: tréninkový rok začíná v pondělí 27.10.2025, každý cyklus trvá přesně 4 po sobě jdoucí týdny a po 13 cyklech (52 týdnů) začíná nový tréninkový rok opět od C1. Hranice cyklů jsou tedy pro všechny sportovce stejné. Aktivity v týdnech bez tréninkového plánu se počítají do svého kalendářního cyklu.
 
 Sloupce tabulky:
 
@@ -108,3 +108,12 @@ Tabulku lze seřadit kliknutím na záhlaví libovolného sloupce; opakovaným k
 ## Odhlášení / změna tokenu
 
 Klikněte na tlačítko **↺ Změnit token** v pravém horním rohu dashboardu.
+
+---
+
+## Verze
+
+| Verze | Datum | Popis |
+|-------|-------|-------|
+| **1.0.0** | 10.8.2026 | Start |
+| **1.0.1** | 9.9.2026 | Oprava zařazení do cyklů |
