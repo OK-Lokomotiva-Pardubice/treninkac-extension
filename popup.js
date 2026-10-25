@@ -16,6 +16,8 @@ const state = {
 const SPORT = {
   run: 'Běh', road_run: 'Běh/silnice', trail_run: 'Trail', track_run: 'Atletika',
   ski: 'Lyže', cross_country_ski: 'Běžky', nordic_ski: 'Běžky', skate_ski: 'Běžky/bruslení',
+  ride: 'Kolo', nordicski: 'Běžky', alpineski: 'Sjezdovky', weighttraining: 'Posilování', workout: 'Cvičení',
+  soccer: 'Fotbal', inlineskate: 'Brusle', rowing: 'Veslování', kayaking: 'Kajak', snowboard: 'Snowboard',
   bike: 'Kolo', cycling: 'Kolo', road_cycling: 'Silniční kolo', mountain_bike: 'MTB', mtb: 'MTB',
   swim: 'Plavání', walk: 'Chůze', hike: 'Turistika',
   strength: 'Posilování', gym: 'Posilování', fitness: 'Fitness',
@@ -231,7 +233,7 @@ function buildCache(detailRaw, logRaw) {
         ZA:      (planned ? (pw.raceCount      || 0) : 0) + add.filter(a => a.isRace).length,
         NE:      (planned ? (planSick[meta.week] || 0) : 0) + add.filter(a => a.isSick).length,
         runDist: (planned ? ps.filter(e => e.kind === 'run').reduce((s, e) => s + (e.distance || 0), 0) : 0)
-                 + add.reduce((s, a) => s + a.dist, 0),
+                 + add.filter(a => isRunSport(a.sport)).reduce((s, a) => s + a.dist, 0),
         zatSec:  (planned ? ps.reduce((s, e) => s + (e.time || 0), 0) : 0)
                  + add.reduce((s, a) => s + a.movTime, 0)
       });
@@ -284,7 +286,10 @@ function renderSidebar() {
 
 async function selectAthlete(uid) {
   state.selected = uid;
+  sz.active = false;
+  szHideTip();
   document.getElementById('nav-totals')?.classList.remove('active');
+  document.getElementById('nav-seasons')?.classList.remove('active');
   if (!state.expCyc[uid]) state.expCyc[uid] = new Set();
   if (!state.expWk[uid])  state.expWk[uid]  = new Set();
   renderSidebar();
@@ -314,7 +319,9 @@ function buildActRows(acts, isOpen) {
     const isFirstOfDay = act.date !== prevDate;
     prevDate = act.date;
     const isNezp   = act.nezp;
-    const sName    = isNezp ? 'nezpracov&#225;no' : (sportName(act.sport) || 'Neza&#345;azeno');
+    const sName    = isNezp
+      ? (sportName(act.sport) ? sportName(act.sport) + ' &#183; ' : '') + 'nezpracov&#225;no'
+      : (sportName(act.sport) || 'Neza&#345;azeno');
     const tagCls   = 'sport-tag' + (isNezp ? ' nezp' : '');
     const noteHtml = act.note ? `<span class="ar-note">${act.note}</span>` : '';
     const kmHtml = act.dist
@@ -514,6 +521,11 @@ async function prefetchNezp(uid) {
 
 /* ── Totals page ───────────────────────────────────────────── */
 
+const UNITS_NOTE =
+  'Běh km = součet kilometrů pouze běžeckých aktivit (běh, trail, OB); chůze, kolo a další sporty se do kilometrů nepočítají. ' +
+  'Zátěž = součet času všech sportů dohromady. ' +
+  'Obojí zahrnuje i nezpracované aktivity, takže čísla mohou být vyšší než na webu Tréninkáče, který počítá jen zpracované.';
+
 const TOTALS_COLS = [
   { key: 'name',    label: 'Sportovec',  fmt: v => v,                            num: false },
   { key: 'DZ',      label: 'DZ',         fmt: v => v || '—',                     num: true  },
@@ -577,6 +589,7 @@ async function renderTotals() {
   main.innerHTML = `
     <div class="totals-wrap">
       <h2>Celkové součty — sezóna 2025/2026</h2>
+      <p class="totals-note">${UNITS_NOTE}</p>
       <table class="totals-table">
         <thead><tr>${thead}</tr></thead>
         <tbody>${tbody}</tbody>
@@ -591,6 +604,452 @@ async function renderTotals() {
       renderTotals();
     });
   });
+}
+
+/* ── Seasons page ──────────────────────────────────────────────
+   Progress of every athlete across training years, regardless of the team
+   the year was run in. Built from each athlete's own training log (which
+   spans all years), so it does not depend on the team plan data. Cycles
+   come from the same calendar as above, shifted back by 52 weeks per year.
+   Athletes are collected from the current team and the two previous ones. */
+
+const SZ_TEAMS    = [TEAM_ID, 108, 8];     // newest first; first hit decides which team a log is fetched through
+const SZ_COUNT    = 4;                     // this training year and the 3 before it
+const SZ_LEN_MS   = CYCLES_PER_YEAR * WEEKS_PER_CYCLE * WEEK_MS;
+const SZ_CYCLE_MS = WEEKS_PER_CYCLE * WEEK_MS;
+const SZ_FIRST_TS = SEASON_START_TS - (SZ_COUNT - 1) * SZ_LEN_MS;
+
+const SZ_LABELS = Array.from({ length: SZ_COUNT }, (_, i) => {
+  const y = new Date(SZ_FIRST_TS + i * SZ_LEN_MS).getUTCFullYear();
+  return `${y}/${String((y + 1) % 100).padStart(2, '0')}`;
+});
+
+/* oldest → newest; the ramp validates as one hue on the dark card surface */
+const SZ_LINE = [
+  { color: '#1c5cab', w: 2,   dash: '2 3' },
+  { color: '#2a78d6', w: 2,   dash: '5 3' },
+  { color: '#6da7ec', w: 2,   dash: ''    },
+  { color: '#b7d3f6', w: 2.5, dash: ''    }
+];
+
+const SZ_METRIC = {
+  km: { label: 'Běh km', unit: 'km', tick: v => String(v), fmt: v => v.toFixed(1), tot: v => v.toFixed(0) },
+  h:  { label: 'Zátěž',  unit: 'h',  tick: v => String(v), fmt: v => fmtTime(Math.round(v * 3600)) || '0:00',
+        tot: v => fmtTime(Math.round(v * 3600)) || '0:00' }
+};
+
+const sz = {
+  active: false,
+  roster: null,                // [{ userId, firstname, lastname, team, current }]
+  agg:    {},                  // userId → [{ n, km[13], h[13] }] oldest → newest
+  metric: 'km', view: 'charts', scale: 'own', sort: 'vol', who: 'all',
+  sel:    null
+};
+
+/* Short outages are frequent: time out quickly and retry network/5xx errors */
+async function apiFetchRetry(path, tries = 5) {
+  for (let i = 1; ; i++) {
+    const ctl   = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15000);
+    try {
+      const r = await fetch(API + path, { headers: { 'Authorization': 'Bearer ' + state.token }, signal: ctl.signal });
+      if (r.status >= 500 && i < tries) throw new Error('HTTP ' + r.status);
+      if (!r.ok) throw Object.assign(new Error('HTTP ' + r.status), { fatal: true });
+      return await r.json();
+    } catch (e) {
+      if (e.fatal || i >= tries) throw e;
+      await new Promise(res => setTimeout(res, 400 * i));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function szLoadRoster() {
+  if (sz.roster) return sz.roster;
+  const lists = await Promise.all(SZ_TEAMS.map(t => apiFetchRetry(`/team/${t}/stats`)));
+  const byId  = new Map();
+  lists.forEach((d, i) => {
+    for (const a of d.results.data.stats || []) {
+      if (a.role !== 'athlete' || byId.has(a.userId)) continue;
+      byId.set(a.userId, { userId: a.userId, firstname: a.firstname, lastname: a.lastname,
+                           team: SZ_TEAMS[i], current: SZ_TEAMS[i] === TEAM_ID });
+    }
+  });
+  sz.roster = [...byId.values()];
+  return sz.roster;
+}
+
+/* Sum a training log into per-cycle running km and load hours for each year */
+function szAggregate(entries) {
+  const seasons = Array.from({ length: SZ_COUNT }, () => ({ n: 0, km: Array(13).fill(0), h: Array(13).fill(0) }));
+  for (const e of entries) {
+    const d = (e.startDate || e.date || '').slice(0, 10);
+    if (!d) continue;
+    const off = Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) - SZ_FIRST_TS;
+    const si  = Math.floor(off / SZ_LEN_MS);
+    if (off < 0 || si >= SZ_COUNT) continue;
+    const c = Math.floor((off % SZ_LEN_MS) / SZ_CYCLE_MS);
+    const s = seasons[si];
+    s.n++;
+    // unprocessed activities (time === null) carry their distance in movingDistance only
+    if (isRunSport(e.sport)) s.km[c] += (e.distance || e.movingDistance || 0) / 1000;
+    s.h[c] += (e.movingTime || 0) / 3600;
+  }
+  const now = Date.now();
+  return seasons.map((s, si) => {
+    if (!s.n) return { n: 0, km: null, h: null };
+    const started = Math.min(13, Math.floor((now - (SZ_FIRST_TS + si * SZ_LEN_MS)) / SZ_CYCLE_MS) + 1);
+    const cut = arr => arr.map((v, c) => c < started ? Math.round(v * 10) / 10 : null);
+    return { n: s.n, km: cut(s.km), h: cut(s.h) };
+  });
+}
+
+async function szLoadAll(onProgress) {
+  const roster = await szLoadRoster();
+  const queue  = roster.filter(a => !sz.agg[a.userId]);
+  let done = roster.length - queue.length, failed = 0;
+  const worker = async () => {
+    while (queue.length) {
+      const a = queue.shift();
+      try {
+        const raw = await apiFetchRetry(`/team/detail/${a.team}/athlete/${a.userId}/training-log`);
+        sz.agg[a.userId] = szAggregate(Object.values(raw.results?.data || {}));
+      } catch (_) { failed++; }
+      onProgress(++done, roster.length);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  return failed;
+}
+
+/* ── helpers ── */
+const szSum   = a => a ? a.reduce((s, v) => s + (v || 0), 0) : null;
+const szTotal = (ath, i) => szSum(ath.seasons[i][sz.metric]);
+
+function szNode(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function szSvg(tag, attrs, parent) {
+  const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+/* newest season with a non-zero value of the selected metric, and its change
+   against the season right before it */
+function szLatest(ath) {
+  for (let i = SZ_COUNT - 1; i >= 0; i--) if (szTotal(ath, i) > 0) return i;
+  return -1;
+}
+function szDelta(ath) {
+  const li = szLatest(ath);
+  if (li < 1) return null;
+  const a = szTotal(ath, li - 1), b = szTotal(ath, li);
+  return a && b != null ? b / a - 1 : null;
+}
+const szFmtDelta = d => d == null ? '—' : (d >= 0 ? '▲ +' : '▼ ') + (d * 100).toFixed(0) + ' %';
+
+function szNiceMax(m) {
+  const p    = Math.pow(10, Math.floor(Math.log10(Math.max(m, 1e-9) / 4)));
+  const step = [1, 2, 5, 10].map(x => x * p).find(s => m / s <= 5) || p;
+  return { step, max: Math.ceil(m / step) * step };
+}
+
+/* ── tooltip ── */
+function szTip() {
+  let t = document.getElementById('sz-tip');
+  if (!t) { t = szNode('div'); t.id = 'sz-tip'; document.body.appendChild(t); }
+  return t;
+}
+function szShowTip(ev, cycle, rows, fmt) {
+  const t = szTip();
+  t.replaceChildren(szNode('div', 'h', 'Cyklus ' + (cycle + 1)));
+  rows.slice().reverse().forEach(r => {
+    const d = szNode('div', 'r');
+    const k = szSvg('svg', { viewBox: '0 0 14 6' });
+    szSvg('line', { x1: 0, x2: 14, y1: 3, y2: 3, stroke: SZ_LINE[r.i].color,
+                    'stroke-width': 2, 'stroke-dasharray': SZ_LINE[r.i].dash }, k);
+    d.append(k, szNode('b', null, r.v == null ? '—' : fmt(r.v)), szNode('span', null, SZ_LABELS[r.i]));
+    t.appendChild(d);
+  });
+  t.style.display = 'block';
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + t.offsetWidth  > innerWidth  - 8) x = ev.clientX - t.offsetWidth  - 14;
+  if (y + t.offsetHeight > innerHeight - 8) y = ev.clientY - t.offsetHeight - 14;
+  t.style.left = x + 'px'; t.style.top = y + 'px';
+}
+function szHideTip() { szTip().style.display = 'none'; }
+
+/* ── line chart (large for the detail, small for the grid) ── */
+function szChart(ath, metric, o) {
+  const big = !!o.big;
+  const W = big ? 520 : 240, H = big ? 220 : 84;
+  const ml = big ? 40 : 4, mr = big ? 58 : 4, mt = big ? 10 : 14, mb = big ? 24 : 14;
+  const M   = SZ_METRIC[metric];
+  const svg = szSvg('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img',
+                             'aria-label': `${ath.lastname} ${ath.firstname}: ${M.label} po cyklech a sezónách` });
+  const series = ath.seasons.map((s, i) => ({ i, v: s[metric] })).filter(s => szSum(s.v) > 0);
+  const top  = o.ymax != null ? o.ymax : Math.max(1, ...series.flatMap(s => s.v.filter(v => v != null)));
+  const nm   = szNiceMax(top), ymax = nm.max;
+  const X = c => ml + c * (W - ml - mr) / 12;
+  const Y = v => mt + (1 - v / ymax) * (H - mt - mb);
+
+  if (big) {
+    for (let t = 0; t <= ymax + 1e-9; t += nm.step) {
+      szSvg('line', { x1: ml, x2: W - mr, y1: Y(t), y2: Y(t), stroke: t === 0 ? 'var(--border)' : 'var(--border-sub)', 'stroke-width': 1 }, svg);
+      szSvg('text', { x: ml - 6, y: Y(t) + 4, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--text-muted)' }, svg).textContent = M.tick(t);
+    }
+    for (let c = 0; c < 13; c++)
+      szSvg('text', { x: X(c), y: H - 6, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--text-muted)' }, svg).textContent = 'C' + (c + 1);
+  } else {
+    szSvg('line', { x1: ml, x2: W - mr, y1: Y(0), y2: Y(0), stroke: 'var(--border)', 'stroke-width': 1 }, svg);
+    szSvg('text', { x: ml, y: 9, 'font-size': 10, fill: 'var(--text-muted)' }, svg).textContent = M.tick(ymax) + ' ' + M.unit;
+    [0, 12].forEach(c =>
+      szSvg('text', { x: X(c), y: H - 2, 'text-anchor': c ? 'end' : 'start', 'font-size': 10, fill: 'var(--text-muted)' }, svg).textContent = 'C' + (c + 1));
+  }
+
+  series.forEach(s => {
+    const pts = s.v.map((v, c) => v == null ? null : X(c) + ',' + Y(v)).filter(Boolean);
+    szSvg('polyline', { points: pts.join(' '), fill: 'none', stroke: SZ_LINE[s.i].color,
+      'stroke-width': big ? SZ_LINE[s.i].w : SZ_LINE[s.i].w - 0.5, 'stroke-dasharray': SZ_LINE[s.i].dash,
+      'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+  });
+
+  /* end-of-line dots; on the large chart also direct labels, nudged apart */
+  const ends = series.map(s => {
+    let c = 12; while (s.v[c] == null) c--;
+    return { i: s.i, x: X(c), y: Y(s.v[c]) };
+  });
+  const newest = series.length ? series[series.length - 1].i : -1;
+  ends.forEach(e => {
+    if (big || e.i === newest)
+      szSvg('circle', { cx: e.x, cy: e.y, r: big ? 4 : 3, fill: SZ_LINE[e.i].color, stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
+  });
+  if (big) {
+    const L = ends.map(e => ({ i: e.i, y: e.y })).sort((a, b) => a.y - b.y);
+    for (let k = 1; k < L.length; k++) if (L[k].y - L[k - 1].y < 13) L[k].y = L[k - 1].y + 13;
+    for (let k = L.length - 1; k >= 0; k--) {          // keep the stack above the x-axis
+      const lim = H - mb - (L.length - 1 - k) * 13;
+      if (L[k].y > lim) L[k].y = lim;
+    }
+    L.forEach(l => szSvg('text', { x: W - mr + 8, y: l.y + 4, 'font-size': 11, fill: 'var(--text-sec)' }, svg).textContent = SZ_LABELS[l.i]);
+  }
+
+  /* hover: the crosshair snaps to the nearest cycle, one tooltip lists every season */
+  const cross = szSvg('line', { y1: mt, y2: H - mb, stroke: 'var(--border)', 'stroke-width': 1, visibility: 'hidden' }, svg);
+  const dots  = series.map(s => szSvg('circle', { r: big ? 4 : 3, fill: SZ_LINE[s.i].color, stroke: 'var(--surface)', 'stroke-width': 2, visibility: 'hidden' }, svg));
+  const hit   = szSvg('rect', { x: ml - 6, y: 0, width: W - ml - mr + 12, height: H, fill: 'transparent' }, svg);
+  if (o.onClick) hit.style.cursor = 'pointer';
+  hit.addEventListener('pointermove', ev => {
+    const r  = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * W / r.width;
+    const c  = Math.max(0, Math.min(12, Math.round((px - ml) / ((W - ml - mr) / 12))));
+    cross.setAttribute('x1', X(c)); cross.setAttribute('x2', X(c)); cross.setAttribute('visibility', 'visible');
+    series.forEach((s, k) => {
+      if (s.v[c] == null) { dots[k].setAttribute('visibility', 'hidden'); return; }
+      dots[k].setAttribute('cx', X(c)); dots[k].setAttribute('cy', Y(s.v[c])); dots[k].setAttribute('visibility', 'visible');
+    });
+    szShowTip(ev, c, ath.seasons.map((s, i) => ({ i, v: s[metric] ? s[metric][c] : null })), M.fmt);
+  });
+  hit.addEventListener('pointerleave', () => {
+    cross.setAttribute('visibility', 'hidden');
+    dots.forEach(d => d.setAttribute('visibility', 'hidden'));
+    szHideTip();
+  });
+  if (o.onClick) hit.addEventListener('click', o.onClick);
+  return svg;
+}
+
+/* ── page ── */
+function szRows() {
+  let rows = sz.roster.filter(a => sz.agg[a.userId]).map(a => ({ ...a, seasons: sz.agg[a.userId] }));
+  if (sz.who === 'current') rows = rows.filter(a => a.current);
+  if (sz.who === 'former')  rows = rows.filter(a => !a.current);
+  const name = a => `${a.lastname} ${a.firstname}`;
+  if (sz.sort === 'name')  rows.sort((a, b) => name(a).localeCompare(name(b), 'cs'));
+  if (sz.sort === 'delta') rows.sort((a, b) => (szDelta(b) ?? -9) - (szDelta(a) ?? -9));
+  if (sz.sort === 'vol')   rows.sort((a, b) => (szTotal(b, SZ_COUNT - 1) || 0) - (szTotal(a, SZ_COUNT - 1) || 0));
+  return rows;
+}
+
+function szSeg(options, key, onChange) {
+  const box = szNode('div', 'sz-seg');
+  options.forEach(([v, label]) => {
+    const b = szNode('button', null, label);
+    b.dataset.v = v;
+    b.setAttribute('aria-pressed', String(sz[key] === v));
+    b.addEventListener('click', () => {
+      sz[key] = v;
+      box.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      onChange();
+    });
+    box.appendChild(b);
+  });
+  return box;
+}
+function szSelect(label, options, key, onChange) {
+  const l = szNode('label', 'sz-fl', label);
+  const s = szNode('select');
+  options.forEach(([v, t]) => { const o = szNode('option', null, t); o.value = v; s.appendChild(o); });
+  s.value = sz[key];
+  s.addEventListener('change', () => { sz[key] = s.value; onChange(); });
+  l.appendChild(s);
+  return l;
+}
+
+async function renderSeasons() {
+  sz.active = true;
+  szHideTip();
+  const main = document.getElementById('main');
+  const box = szNode('div', 'state-box');
+  const msg = szNode('div', null, 'Načítám sportovce…');
+  box.append(szNode('div', 'spinner'), msg);
+  main.replaceChildren(box);
+
+  let failed = 0;
+  try {
+    failed = await szLoadAll((done, total) => { msg.textContent = `Načítám tréninkové deníky… ${done}/${total}`; });
+  } catch (e) {
+    if (!sz.active) return;
+    const err = szNode('div', 'state-box');
+    const retry = szNode('button', 'ghost', 'Zkusit znovu');
+    retry.addEventListener('click', renderSeasons);
+    err.append(szNode('div', 'err-txt', 'Chyba: ' + e.message), retry);
+    main.replaceChildren(err);
+    return;
+  }
+  if (!sz.active) return;
+
+  const root = szNode('div', 'sz-wrap');
+  const bar  = szNode('div', 'sz-bar');
+  const detail = szNode('section', 'sz-card');
+  const title  = szNode('div', 'sz-sec');
+  const list   = szNode('div');
+
+  const legend = szNode('div', 'sz-legend');
+  SZ_LABELS.forEach((l, i) => {
+    const sp = szNode('span');
+    const k  = szSvg('svg', { viewBox: '0 0 22 8' });
+    szSvg('line', { x1: 0, x2: 22, y1: 4, y2: 4, stroke: SZ_LINE[i].color, 'stroke-width': SZ_LINE[i].w, 'stroke-dasharray': SZ_LINE[i].dash }, k);
+    sp.append(k, document.createTextNode(l));
+    legend.appendChild(sp);
+  });
+
+  const nCur = sz.roster.filter(a => a.current).length;
+  const draw = () => { drawDetail(); drawList(); };
+  bar.append(
+    szSeg([['km', 'Běh km'], ['h', 'Zátěž']], 'metric', draw),
+    szSeg([['charts', 'Grafy'], ['table', 'Tabulka']], 'view', drawList),
+    szSelect('Škála', [['own', 'vlastní u každého'], ['shared', 'společná']], 'scale', drawList),
+    szSelect('Řazení', [['vol', 'objem letos'], ['delta', 'změna oproti předchozí sezóně'], ['name', 'jméno']], 'sort', drawList),
+    szSelect('Sportovci', [['all', `všichni (${sz.roster.length})`], ['current', `současní (${nCur})`], ['former', `bývalí (${sz.roster.length - nCur})`]], 'who', draw),
+    legend
+  );
+
+  function pick(id) { sz.sel = id; drawDetail(); drawList(); }
+
+  function drawDetail() {
+    detail.replaceChildren();
+    const rows = szRows();
+    if (!rows.some(a => a.userId === sz.sel)) sz.sel = rows.length ? rows[0].userId : null;
+    const ath = rows.find(a => a.userId === sz.sel);
+    if (!ath) { detail.appendChild(szNode('div', 'sz-note', 'Žádní sportovci k zobrazení.')); return; }
+
+    const head = szNode('div', 'sz-dhead');
+    head.appendChild(szNode('h2', null, `${ath.lastname} ${ath.firstname}`));
+    const pills = szNode('div', 'sz-pills');
+    ['km', 'h'].forEach(m => {
+      const parts = ath.seasons.map((s, i) => s[m] ? `${SZ_LABELS[i]}: ${SZ_METRIC[m].tot(szSum(s[m]))} ${SZ_METRIC[m].unit}` : null).filter(Boolean);
+      const p = szNode('span');
+      p.append(szNode('b', null, SZ_METRIC[m].label + ' celkem  '), document.createTextNode(parts.join('  ·  ') || 'bez dat'));
+      pills.appendChild(p);
+    });
+    head.appendChild(pills);
+
+    const charts = szNode('div', 'sz-charts');
+    ['km', 'h'].forEach(m => {
+      const c = szNode('div');
+      c.append(szNode('p', 'sz-ctitle', `${SZ_METRIC[m].label}${m === 'h' ? ' (h)' : ''} za cyklus (4 týdny)`), szChart(ath, m, { big: true }));
+      charts.appendChild(c);
+    });
+    detail.append(head, charts);
+  }
+
+  function drawList() {
+    list.replaceChildren();
+    const rows = szRows();
+    const M    = SZ_METRIC[sz.metric];
+    title.textContent = `${rows.length} sportovců · ${M.label} po cyklech · klikněte na sportovce pro detail`;
+
+    if (sz.view === 'charts') {
+      const ymax = sz.scale === 'shared'
+        ? Math.max(1, ...rows.flatMap(a => a.seasons.flatMap(s => (s[sz.metric] || []).filter(v => v != null))))
+        : null;
+      const grid = szNode('div', 'sz-grid');
+      rows.forEach(a => {
+        const card = szNode('div', 'sz-card sz-mini');
+        card.setAttribute('role', 'button'); card.tabIndex = 0;
+        if (a.userId === sz.sel) card.setAttribute('aria-current', 'true');
+        const top = szNode('div', 'nm');
+        const nm  = szNode('span', null, `${a.lastname} ${a.firstname}`);
+        if (!a.current) nm.appendChild(szNode('span', 'sz-tag', 'bývalý'));
+        top.append(nm, szNode('span', 'dl', szFmtDelta(szDelta(a))));
+        const li  = szLatest(a);
+        const tot = szNode('div', 'tot', li < 0 ? 'bez dat' : `${SZ_LABELS[li]}: ${M.tot(szTotal(a, li))} ${M.unit}`);
+        card.append(top, tot, szChart(a, sz.metric, { big: false, ymax, onClick: () => pick(a.userId) }));
+        card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(a.userId); } });
+        grid.appendChild(card);
+      });
+      list.appendChild(grid);
+    } else {
+      const wrap = szNode('div', 'sz-card');
+      const tb = szNode('table', 'sz-table');
+      const hr = szNode('tr');
+      ['Sportovec', ...SZ_LABELS, 'Změna vs předchozí sezóna'].forEach(t => hr.appendChild(szNode('th', null, t)));
+      tb.appendChild(szNode('thead')).appendChild(hr);
+      const body = szNode('tbody');
+      rows.forEach(a => {
+        const tr = szNode('tr');
+        tr.tabIndex = 0;
+        if (a.userId === sz.sel) tr.setAttribute('aria-current', 'true');
+        const first = szNode('td', null, `${a.lastname} ${a.firstname}`);
+        if (!a.current) first.appendChild(szNode('span', 'sz-tag', 'bývalý'));
+        tr.appendChild(first);
+        for (let i = 0; i < SZ_COUNT; i++) {
+          const v = szTotal(a, i);
+          tr.appendChild(szNode('td', v == null ? 'dim' : null, v == null ? '—' : M.tot(v)));
+        }
+        const d = szDelta(a);
+        tr.appendChild(szNode('td', d == null ? 'dim' : null, szFmtDelta(d)));
+        tr.addEventListener('click', () => pick(a.userId));
+        tr.addEventListener('keydown', e => { if (e.key === 'Enter') pick(a.userId); });
+        body.appendChild(tr);
+      });
+      tb.appendChild(body); wrap.appendChild(tb); list.appendChild(wrap);
+    }
+  }
+
+  root.appendChild(bar);
+  if (failed) {
+    const w = szNode('div', 'sz-warn');
+    w.appendChild(document.createTextNode(`${failed} sportovců se nepodařilo načíst (výpadek spojení). `));
+    const b = szNode('button', 'ghost', 'Zkusit znovu');
+    b.addEventListener('click', renderSeasons);
+    w.appendChild(b);
+    root.appendChild(w);
+  }
+  const units = szNode('p', 'sz-note', UNITS_NOTE);
+  units.style.margin = '0 0 14px';
+  root.append(units, detail, title, list,
+    szNode('p', 'sz-note', 'Sezóna = 52 týdnů od pondělí, cykly po 4 týdnech od ' + fmtDateObj(new Date(SEASON_START_TS)) +
+      ' (a o násobky 52 týdnů zpět). Nemocné dny se z deníku zrekonstruovat nedají.'));
+  main.replaceChildren(root);
+  drawDetail(); drawList();
 }
 
 /* ── Wire-up ───────────────────────────────────────────────── */
@@ -637,14 +1096,30 @@ document.getElementById('nav-totals').addEventListener('click', e => {
   e.preventDefault();
   if (!state.token) return;
   state.selected = null;
+  sz.active = false;
+  szHideTip();
   document.querySelectorAll('.ath-item').forEach(el => el.classList.remove('active'));
+  document.getElementById('nav-seasons').classList.remove('active');
   document.getElementById('nav-totals').classList.add('active');
   renderTotals();
+});
+
+document.getElementById('nav-seasons').addEventListener('click', e => {
+  e.preventDefault();
+  if (!state.token) return;
+  state.selected = null;
+  document.querySelectorAll('.ath-item').forEach(el => el.classList.remove('active'));
+  document.getElementById('nav-totals').classList.remove('active');
+  document.getElementById('nav-seasons').classList.add('active');
+  renderSeasons();
 });
 
 document.getElementById('btn-reset').addEventListener('click', async () => {
   await chrome.storage.local.remove('token');
   Object.assign(state, { token: null, athletes: [], selected: null, cache: {}, expCyc: {}, expWk: {} });
+  Object.assign(sz, { active: false, roster: null, agg: {}, sel: null });
+  document.getElementById('nav-seasons').classList.remove('active');
+  document.getElementById('nav-totals').classList.remove('active');
   document.getElementById('app').style.display   = 'none';
   document.getElementById('setup').style.display = 'flex';
   document.getElementById('tok-input').value     = '';

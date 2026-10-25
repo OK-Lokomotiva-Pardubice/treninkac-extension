@@ -103,6 +103,26 @@ Odkaz **Celkové součty** v horní liště otevře souhrnnou tabulku se součty
 
 Tabulku lze seřadit kliknutím na záhlaví libovolného sloupce; opakovaným kliknutím se pořadí obrátí.
 
+### Sezóny
+
+Odkaz **Sezóny** v horní liště ukazuje pokrok každého sportovce napříč tréninkovými roky (aktuální a tři předchozí), bez ohledu na to, v jakém týmu který rok proběhl. Zahrnuje současné i bývalé členy z týmů 117, 108 a 8 (bývalí jsou označeni „bývalý“).
+
+- Pro každého sportovce je malý graf s hodnotami po cyklech C1–C13, každá sezóna jedna čára.
+- Přepínač **Běh km / Zátěž** mění ukazatel, **Grafy / Tabulka** způsob zobrazení.
+- **Škála** může být vlastní u každého sportovce, nebo společná pro všechny.
+- **Řazení** je ve výchozím stavu podle objemu letos, dále podle změny oproti předchozí sezóně a podle jména. Filtr **Sportovci** omezí výběr na současné nebo bývalé členy.
+- Kliknutím na sportovce se nahoře zobrazí detail se dvěma většími grafy (km a Zátěž) a po najetí myší se zobrazí hodnoty všech sezón pro daný cyklus.
+
+Data se skládají z tréninkového deníku sportovce, takže nezávisí na týmovém plánu. Nemocné dny (NE) se tak zrekonstruovat nedají.
+
+### Co znamená Běh km a Zátěž
+
+V záložkách Celkové součty i Sezóny platí totéž:
+
+- **Běh km** je součet kilometrů pouze běžeckých aktivit (běh, trail, OB). Chůze, kolo a další sporty se do kilometrů nepočítají.
+- **Zátěž** je součet času všech sportů dohromady.
+- Obojí zahrnuje i **nezpracované** aktivity, takže čísla mohou být vyšší než na webu Tréninkáče, který počítá jen zpracované. U nezpracovaných aktivit se v seznamu zobrazí sport, např. „Kolo · nezpracováno“.
+
 ---
 
 ## Odhlášení / změna tokenu
@@ -117,3 +137,4 @@ Klikněte na tlačítko **↺ Změnit token** v pravém horním rohu dashboardu.
 |-------|-------|-------|
 | **1.0.0** | 10.8.2026 | Start |
 | **1.0.1** | 9.9.2026 | Oprava zařazení do cyklů |
+| **1.1.0** | 25.10.2026 | Nová záložka Sezóny (pokrok napříč sezónami, včetně bývalých členů). Běh km počítá jen běžecké sporty, u nezpracovaných aktivit se zobrazí sport. Vysvětlení Běh km a Zátěž v záložkách. |

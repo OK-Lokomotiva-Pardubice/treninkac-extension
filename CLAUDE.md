@@ -24,9 +24,23 @@ Endpoints used:
   GET /team/117/stats                                      → athlete list
   GET /team/detail/117/athlete/:uid                        → cycle/week plan + sport stats
   GET /team/detail/117/athlete/:uid/training-log           → individual activity log
+  GET /team/{117,108,8}/stats                              → rosters for the Sezóny page
+  GET /team/detail/{team}/athlete/:uid/training-log        → same log, fetched via the team the athlete belongs to
 ```
 
 Training year: `2025-10-27` – `2026-10-25` (activities outside this range are filtered out).
+
+### Seasons are separate teams
+Every training year is its own team: `8` = 2022-10-31..2023-10-29, `108` = 2023-10-30..2024-10-27, `117` = 2025-10-27..2026-10-25. The 2024/25 team no longer exists. The training log endpoint ignores period parameters and returns the athlete's **whole history**, so cross-season numbers are rebuilt from the log alone (the plan data is per team and has no sick days).
+
+### Unprocessed ("nezp") activities
+Entries with `time === null && movingTime != null`. They have `sport`, `name`, `startDate`, `movingTime` and `movingDistance`, but **no `distance`**. Always read distance as `distance || movingDistance`.
+
+### km vs Zátěž
+**Běh km** counts only running sports (`isRunSport`), also for unprocessed activities and unplanned weeks. **Zátěž** sums the time of all sports. Both include unprocessed activities (explained in `UNITS_NOTE`, shown on the Celkové součty and Sezóny pages).
+
+### Flaky network
+Short outages are frequent. The Sezóny page loads through `apiFetchRetry` (15 s timeout, up to 5 attempts for network and 5xx errors). `apiFetch` (used elsewhere) does not retry.
 
 ### Getting the token
 
@@ -130,6 +144,11 @@ resolved via `isoWeekOfTs(ts)`; no year guessing is involved.
 | `selectAthlete(uid)` | Load (if needed) + render athlete detail |
 | `renderMain(uid)` | Render cycle/week/activity table for athlete |
 | `renderTotals()` | Load all athletes + render sortable totals table |
+| `renderSeasons()` | Sezóny page: load rosters + logs, render controls, detail charts and grid/table |
+| `szLoadAll(onProgress)` / `szLoadRoster()` | Fetch athletes of teams 117/108/8 (deduplicated by userId) and their logs, 6 in parallel |
+| `szAggregate(entries)` | Sum a log into per-cycle running km and load hours for each of the `SZ_COUNT` (4) seasons |
+| `szChart(ath, metric, opts)` | SVG line chart (large detail or small grid card) with crosshair + tooltip |
+| `apiFetchRetry(path)` | `apiFetch` with timeout and retries for short outages |
 | `weekIndexOf(dateStr)` | Absolute week index (0-based) of a `YYYY-MM-DD` date since `SEASON_START` |
 | `weekMonday(wi)` | UTC Date of the Monday of absolute week index `wi` |
 | `isoWeekOfTs(ts)` | `{ year, week }` — ISO week number + ISO year of a UTC timestamp |
@@ -153,6 +172,7 @@ All CSS lives in the `<style>` block in `dashboard.html`. Key classes:
 | `.cy-dates` | Date range span next to cycle/week label (muted, small) |
 | `.cy-copy` | Clipboard copy button on cycle row (hidden until hover) |
 | `.totals-table` | Table on the Celkové součty page |
+| `.sz-*` | Sezóny page (`.sz-wrap`, `.sz-bar`, `.sz-card`, `.sz-mini`, `.sz-table`, …); `#sz-tip` is the chart tooltip |
 
 CSS uses CSS variables (`--accent`, `--text`, `--text-muted`, `--surface`, `--border`, `--alert`, …) and supports both light and dark themes via `@media (prefers-color-scheme: dark)` and `[data-theme]` overrides.
 
@@ -167,6 +187,13 @@ state = {
   expCyc,            // userId → Set<cycleNum>  (expanded cycles)
   expWk,             // userId → Set<"cycleNum-weekNum">  (expanded weeks)
 }
+
+sz = {               // Sezóny page
+  active,            // false when another page replaced it (stops late renders)
+  roster,            // [{ userId, firstname, lastname, team, current }] from teams 117/108/8
+  agg,               // userId → per-season { n, km[13], h[13] }, oldest → newest
+  metric, view, scale, sort, who, sel   // UI state; sort defaults to 'vol'
+}
 ```
 
 ## Features summary
@@ -180,6 +207,7 @@ state = {
 - Date range (DD.MM.YYYY – DD.MM.YYYY) shown next to cycle and week names
 - ⎘ copy button on cycle rows — copies DZ/FA/ZA/NE/Zátěž/Běh km as TSV for Google Sheets
 - **Celkové součty** page: all athletes loaded in parallel, sortable summary table
+- **Sezóny** page: progress of every athlete (current and former members of teams 117/108/8) across the last 4 training years, per cycle, as small-multiple line charts (Běh km / Zátěž) or a table; default sort by volume
 
 ## Releasing
 
