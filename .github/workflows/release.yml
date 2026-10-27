@@ -28,6 +28,7 @@ jobs:
             background.js \
             dashboard.html \
             popup.js \
+            plan.json \
             -x "*.git*"
 
       - name: Create GitHub Release

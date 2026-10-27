@@ -630,6 +630,62 @@ td.num { text-align: right; }
 .sz-table tbody tr { cursor: pointer; }
 .sz-table tbody tr:hover { background: var(--hover); }
 .sz-table tbody tr[aria-current="true"] td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.view-sw { display: inline-flex; align-self: flex-start; flex-shrink: 0; margin: 12px 24px;  border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.view-sw button { background: transparent; color: var(--text-sec); border: 0; padding: 5px 14px; font-size: 12px; cursor: pointer; }
+.view-sw button.on { background: var(--accent-dim); color: var(--accent); }
+.cal-wrap { flex: 1; min-height: 0; padding: 0 24px 40px; overflow-y: auto; }
+.cal-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px; color: var(--text-sec); margin-bottom: 14px; }
+.cal-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.cal-legend .cd { display: inline-block; width: 14px; height: 14px; aspect-ratio: auto; }
+.cal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(540px, 100%), 1fr)); gap: 18px; }
+.cal-card { background: var(--surface); border: 1px solid var(--border-sub); border-radius: 8px; padding: 14px 16px 16px; }
+.cal-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; font-size: 14px; color: var(--text-sec); }
+.cal-h b { color: var(--accent); font-size: 17px; }
+.cal-h em { margin-left: auto; font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
+.cal-g { display: grid; grid-template-columns: 34px repeat(7, 1fr) 56px; gap: 5px; align-items: center; }
+.cdow { font-size: 12px; color: var(--text-muted); text-align: center; }
+.cwk { font-size: 12px; color: var(--text-muted); }
+.cwt { font-size: 14px; color: var(--text-sec); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cwt .ne { color: var(--sick); font-size: 11px; margin-right: 6px; }
+.cd { position: relative; aspect-ratio: 1; border-radius: 6px; background: var(--week-row); border: 1px solid var(--border-sub); display: flex; flex-direction: column; justify-content: space-between; padding: 4px 6px; box-sizing: border-box; }
+.cd .d { font-size: 12px; color: var(--text-muted); line-height: 1; }
+.cd .k { font-size: 14px; font-weight: 600; color: var(--bg); line-height: 1; text-align: right; font-variant-numeric: tabular-nums; }
+.cd.l1 { background: rgba(5,217,164,0.25); border-color: transparent; }
+.cd.l2 { background: rgba(5,217,164,0.45); border-color: transparent; }
+.cd.l3 { background: rgba(5,217,164,0.7);  border-color: transparent; }
+.cd.l4 { background: var(--accent);        border-color: transparent; }
+.cd.l1 .k, .cd.l2 .k { color: var(--text); }
+.cd.l1 .d, .cd.l2 .d, .cd.l3 .d, .cd.l4 .d { color: rgba(12,18,32,0.7); }
+.cd.l1 .d, .cd.l2 .d { color: var(--text-sec); }
+.cd.other { background: repeating-linear-gradient(135deg, var(--elevated) 0 3px, var(--week-row) 3px 6px); }
+.cd.race { box-shadow: inset 0 0 0 2px var(--race); }
+.cd.sick::after { content: ''; position: absolute; top: 50%; right: 5px; margin-top: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--sick); }
+.cd .pips { position: absolute; top: 5px; right: 5px; display: flex; gap: 3px; align-items: center; }
+.cd .pips i { width: 8px; height: 8px; border-radius: 2px; box-sizing: border-box; border: 1px solid var(--text); }
+.cd .pips i.run { background: var(--text); }
+.cd .pips i.nz  { background: var(--alert); border-color: var(--alert); }
+.cd .pips b { font-size: 11px; line-height: 1; color: var(--text); }
+.cal-legend .pips { position: static; }
+.cd.has { cursor: pointer; }
+.cd.has:hover { filter: brightness(1.25); }
+.cal-h b.nz, .cwk.nz { color: var(--alert); }
+#cal-pop { position: fixed; z-index: 60; background: var(--elevated); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.4); font-size: 12px; max-width: 360px; }
+#cal-pop .ph { color: var(--text-sec); margin-bottom: 6px; }
+#cal-pop .pr { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+#cal-pop .pr a { color: var(--accent); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+#cal-pop .pr a:hover { text-decoration: underline; }
+#cal-pop .pk { margin-left: auto; color: var(--text-sec); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cd.fut { opacity: 0.35; }
+.cd.today { outline: 2px solid var(--text); outline-offset: 1px; }
+.pv-chart { margin-bottom: 14px; }
+.pv-legend { margin: 0 0 6px; }
+.pv-sw-bar  { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--accent); }
+.pv-sw-line { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--text); }
+.pv-strip { white-space: nowrap; }
+.pv-chip { display: inline-block; min-width: 26px; margin-left: 4px; padding: 1px 5px; border-radius: 4px; background: var(--hover); color: var(--text-sec); font-size: 11px; text-align: center; }
+.pv-chip.gap   { background: rgba(255,107,107,0.18); color: var(--alert); }
+.pv-chip.norun { background: rgba(255,200,80,0.18); color: #e0b040; }
+.pv-chip.fut   { opacity: 0.4; }
 .sz-warn { background: rgba(255,107,107,0.07); border: 1px solid rgba(255,107,107,0.3); color: var(--alert); border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; display: flex; align-items: center; gap: 12px; font-size: 12px; }
 .sz-warn button { padding: 4px 10px; font-size: 12px; }
 .sz-note, .totals-note { color: var(--text-muted); font-size: 11.5px; margin-top: 18px; max-width: 80ch; line-height: 1.6; }
@@ -671,6 +727,7 @@ td.num { text-align: right; }
     <div class="h-sep"></div>
     <a class="h-nav-link" id="nav-totals" href="#">Celkov&#233; sou&#269;ty</a>
     <a class="h-nav-link" id="nav-seasons" href="#">Sez&#243;ny</a>
+    <a class="h-nav-link" id="nav-plan" href="#">Pl&#225;n vs. realita</a>
     <div class="flex1"></div>
     <button class="h-btn" id="btn-reset">&#8635; Zm&#283;nit token</button>
   </header>

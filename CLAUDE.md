@@ -10,6 +10,7 @@ Chrome extension (Manifest V3) providing an alternative training-data dashboard 
 | `background.js` | Service worker — opens `dashboard.html` as a full tab on icon click |
 | `dashboard.html` | Full-viewport page; all CSS is inline in a `<style>` block, no external assets |
 | `popup.js` | All application logic — data fetching, cache, rendering |
+| `plan.json` | Planned running km per cycle and level (kasper+, kasper, emil, simone), one entry per training year in `seasons[]` (`year`, `start` = Monday of C1, `levels`, `cycles[{n,label,km}]`). Loaded by the Plán vs. realita page; add a new object per year |
 
 There is no build step. Edit the files directly and reload the extension at `chrome://extensions`.
 
@@ -208,6 +209,8 @@ sz = {               // Sezóny page
 - ⎘ copy button on cycle rows — copies DZ/FA/ZA/NE/Zátěž/Běh km as TSV for Google Sheets
 - **Celkové součty** page: all athletes loaded in parallel, sortable summary table
 - **Sezóny** page: progress of every athlete (current and former members of teams 117/108/8) across the last 4 training years, per cycle, as small-multiple line charts (Běh km / Zátěž) or a table; default sort by volume
+- **Plán vs. realita** page: per athlete and training year, planned vs. actual running km per cycle — chart (bars = actual, line = plan, red dot = weeks without any activity), summary and a table with weekly chips. The plan level is picked per athlete and year and remembered in `chrome.storage.local` (`planLevels`)
+- **Kalendář** toggle in the athlete view (next to Tabulka): 13 small calendars, one per cycle, days shaded by run km; pips top-right per activity when a day has several or an unprocessed one (red), click a day for links to its activities
 
 ## Releasing
 
@@ -216,4 +219,4 @@ Bump `"version"` in `manifest.json`, commit, then:
 git tag v1.x.x
 git push origin v1.x.x
 ```
-GitHub Actions (`.github/workflows/release.yml`) zips the four extension files and publishes a GitHub Release automatically. See `RELEASE.md` for details.
+GitHub Actions (`.github/workflows/release.yml`) zips the five extension files (`manifest.json`, `background.js`, `dashboard.html`, `popup.js`, `plan.json`) and publishes a GitHub Release automatically. See `RELEASE.md` for details.

@@ -93,6 +93,14 @@ Sloupce tabulky:
 - Kliknutím na **název aktivity** se otevře její detail přímo v Tréninkáči.
 - Cykly a týdny s **nezpracovanými záznamy** jsou označeny červeně.
 
+### Kalendář
+
+V pohledu sportovce přepne **Tabulka | Kalendář** zobrazení na 13 malých kalendářů, jeden na cyklus.
+
+- Den je vybarvený podle km běhu (relativně k nejdelšímu dni sportovce), šrafovaný je den s jiným sportem bez běhu, modrý rámeček je závod a oranžová tečka nemoc.
+- Čtverečky vpravo nahoře ukazují aktivity dne, pokud je jich víc nebo je některá nezpracovaná (plná = běh, prázdná = jiný sport, červená = nezpracováno). Červené T.. a C.. značí týden/cyklus s nezpracovanou aktivitou.
+- Kliknutí na den zobrazí odkazy na jeho aktivity v Tréninkáči.
+
 ### Kopírování do schránky
 
 U každého řádku cyklu se při najetí myší zobrazí ikona **⎘**. Kliknutím na ni se hodnoty daného cyklu (DZ, FA, ZA, NE, Zátěž, Běh km) zkopírují do schránky ve formátu pro přímé vložení do tabulky Google Sheets.
@@ -114,6 +122,17 @@ Odkaz **Sezóny** v horní liště ukazuje pokrok každého sportovce napříč 
 - Kliknutím na sportovce se nahoře zobrazí detail se dvěma většími grafy (km a Zátěž) a po najetí myší se zobrazí hodnoty všech sezón pro daný cyklus.
 
 Data se skládají z tréninkového deníku sportovce, takže nezávisí na týmovém plánu. Nemocné dny (NE) se tak zrekonstruovat nedají.
+
+### Plán vs. realita
+
+Odkaz **Plán vs. realita** porovná plánované kilometry po cyklech se skutečností jednoho sportovce.
+
+- Nahoře vyberete **rok plánu**, **sportovce** a jeho **úroveň v plánu** (kasper+, kasper, emil, simone). Úroveň se pamatuje jen v tomto prohlížeči, zvlášť pro každého sportovce a rok.
+- Graf ukazuje skutečné km běhu (sloupce) proti plánu (čára). Červená tečka pod cyklem znamená týdny bez jakékoli aktivity.
+- Pod grafem je souhrn za dokončené cykly a tabulka s rozdílem, % plánu a týdny (červeně bez aktivity, žlutě bez běhu).
+- Plán je v souboru `plan.json` (objemy z přehledu objemů); pro další rok se přidá další položka do `seasons`.
+
+Týdenní plán v km neexistuje, proto se porovnává po cyklech. Týden bez aktivity může být nemoc, zranění i pauza, z deníku to rozlišit nejde.
 
 ### Co znamená Běh km a Zátěž
 
@@ -138,3 +157,4 @@ Klikněte na tlačítko **↺ Změnit token** v pravém horním rohu dashboardu.
 | **1.0.0** | 10.8.2026 | Start |
 | **1.0.1** | 9.9.2026 | Oprava zařazení do cyklů |
 | **1.1.0** | 25.10.2026 | Nová záložka Sezóny (pokrok napříč sezónami, včetně bývalých členů). Běh km počítá jen běžecké sporty, u nezpracovaných aktivit se zobrazí sport. Vysvětlení Běh km a Zátěž v záložkách. |
+| **1.2.0** | 27.10.2026 | Nová záložka Plán vs. realita (plán objemů po cyklech vs. skutečnost, výběr roku, graf). V pohledu sportovce přepínač Tabulka / Kalendář s 13 kalendáři cyklů. |

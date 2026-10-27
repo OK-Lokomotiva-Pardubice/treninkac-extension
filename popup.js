@@ -290,6 +290,7 @@ async function selectAthlete(uid) {
   szHideTip();
   document.getElementById('nav-totals')?.classList.remove('active');
   document.getElementById('nav-seasons')?.classList.remove('active');
+  document.getElementById('nav-plan')?.classList.remove('active');
   if (!state.expCyc[uid]) state.expCyc[uid] = new Set();
   if (!state.expWk[uid])  state.expWk[uid]  = new Set();
   renderSidebar();
@@ -347,6 +348,116 @@ function buildActRows(acts, isOpen) {
         ${zaHtml}${neHtml}${ztHtml}${kmHtml}
       </tr>`;
   }).join('');
+}
+
+/* ── Calendar view of one athlete ─────────────────────────────
+   Alternative to the cycle/week table: one small calendar per cycle (4 weeks
+   × Mon–Sun), every day shaded by the km run that day. Always draws all 13
+   cycles; the week totals reuse the table's numbers. */
+
+let detailView = 'table';                    // 'table' | 'cal'
+const CAL_DOW = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
+let calDays = {};                             // date → activities of that day, for the click popover
+
+function calClosePop() { document.getElementById('cal-pop')?.remove(); }
+
+/* Popover with a link to every activity of the clicked day (like the links in the table) */
+function calOpenPop(ev, iso) {
+  calClosePop();
+  const acts = calDays[iso] || [];
+  if (!acts.length) return;
+  const pop = szNode('div'); pop.id = 'cal-pop';
+  pop.appendChild(szNode('div', 'ph', fmtDate(iso)));
+  acts.forEach(a => {
+    const row = szNode('div', 'pr');
+    const link = szNode('a', null, a.name);
+    link.href = `https://treninkac.orientacnisporty.cz/activities/training/detail/${a.id}`;
+    link.target = '_blank'; link.rel = 'noopener';
+    const tag = szNode('span', 'sport-tag' + (a.nezp ? ' nezp' : ''),
+      a.nezp ? (sportName(a.sport) ? sportName(a.sport) + ' · ' : '') + 'nezpracováno' : (sportName(a.sport) || 'Nezařazeno'));
+    const km = szNode('span', 'pk', a.dist ? (a.dist / 1000).toFixed(1) + ' km' : (a.movTime ? fmtTime(a.movTime) : ''));
+    row.append(link, tag, km);
+    pop.appendChild(row);
+  });
+  document.body.appendChild(pop);
+  let x = ev.clientX + 10, y = ev.clientY + 10;
+  if (x + pop.offsetWidth  > innerWidth  - 8) x = Math.max(8, innerWidth  - pop.offsetWidth  - 8);
+  if (y + pop.offsetHeight > innerHeight - 8) y = Math.max(8, ev.clientY - pop.offsetHeight - 10);
+  pop.style.left = x + 'px'; pop.style.top = y + 'px';
+}
+document.addEventListener('click', e => { if (!e.target.closest('#cal-pop, .cd.has')) calClosePop(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') calClosePop(); });
+
+function calHtml(uid) {
+  const { cycleData, activsByWeek } = state.cache[uid];
+  const todayTs = Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+  const dayKm = {};                                    // date → run km, for the shading scale
+  calDays = {};
+  let maxKm = 0;
+  for (const acts of Object.values(activsByWeek))
+    for (const a of acts) (calDays[a.date] = calDays[a.date] || []).push(a);
+  for (const acts of Object.values(activsByWeek))
+    for (const a of acts) if (isRunSport(a.sport)) {
+      dayKm[a.date] = (dayKm[a.date] || 0) + a.dist / 1000;
+      maxKm = Math.max(maxKm, dayKm[a.date]);
+    }
+  const lvl = km => km <= 0 ? 0 : Math.min(4, Math.ceil(km / maxKm * 4));
+
+  const cards = Array.from({ length: CYCLES_PER_YEAR }, (_, ci) => {
+    const num = ci + 1;
+    const cd  = cycleData.find(c => c.num === num);
+    const mon = weekMonday(ci * WEEKS_PER_CYCLE);
+    const sun = new Date(mon.getTime() + (WEEKS_PER_CYCLE * 7 - 1) * DAY_MS);
+
+    const weeks = Array.from({ length: WEEKS_PER_CYCLE }, (_, k) => {
+      const wTs  = SEASON_START_TS + (ci * WEEKS_PER_CYCLE + k) * WEEK_MS;
+      const wk   = isoWeekOfTs(wTs).week;
+      const acts = activsByWeek[`${num}-${wk}`] || [];
+      const wd   = cd && cd.weeks[k];
+      const days = CAL_DOW.map((dn, di) => {
+        const ts  = wTs + di * DAY_MS;
+        const d   = new Date(ts);
+        const iso = d.toISOString().slice(0, 10);
+        const da  = acts.filter(a => a.date === iso);
+        const km  = dayKm[iso] || 0;
+        const other = da.some(a => !isRunSport(a.sport));
+        const race  = da.some(a => a.isRace), sick = da.some(a => a.isSick), nezp = da.some(a => a.nezp);
+        const sec   = da.reduce((s, a) => s + a.movTime, 0);
+        const cls = ['cd', 'l' + lvl(km), ts > todayTs ? 'fut' : '', ts === todayTs ? 'today' : '',
+                     race ? 'race' : '', sick ? 'sick' : '', nezp ? 'nezp' : '', da.length ? 'has' : '', !km && other ? 'other' : ''].filter(Boolean).join(' ');
+        const tip = `${dn} ${fmtDateObj(d)}` + (da.length
+          ? ` · ${da.length > 1 ? da.length + '× aktivita · ' : ''}${km ? km.toFixed(1) + ' km běh' : 'bez běhu'}${other ? ' · jiný sport' : ''}${sec ? ' · zátěž ' + fmtTime(sec) : ''}${race ? ' · závod' : ''}${sick ? ' · nemoc' : ''}${nezp ? ' · nezpracováno' : ''}${da.length ? ' · klikněte pro odkaz' : ''}`
+          : ' · bez aktivity');
+        const label = d.getUTCDate() === 1 ? `${d.getUTCDate()}.${d.getUTCMonth() + 1}.` : d.getUTCDate();
+        // one pip per activity when a day has several (or an unprocessed one): filled = run, hollow = other sport, red = unprocessed
+        const pips = da.length < 2 && !nezp ? '' : '<span class="pips">' + da.slice(0, 4).map(a =>
+          `<i class="${a.nezp ? 'nz' : isRunSport(a.sport) ? 'run' : 'oth'}"></i>`).join('') + (da.length > 4 ? '<b>+</b>' : '') + '</span>';
+        return `<div class="${cls}" data-date="${iso}" title="${tip}"><span class="d">${label}</span>${pips}<span class="k">${km ? (km < 10 ? km.toFixed(1) : Math.round(km)) : ''}</span></div>`;
+      }).join('');
+      const tot = wd && wd.runDist ? (wd.runDist / 1000).toFixed(0) : '';
+      const ne  = wd && wd.NE ? `<span class="ne" title="dny nemoci v týdnu">NE ${wd.NE}</span>` : '';
+      return `<div class="cwk${wd && wd.hasNezp ? ' nz' : ''}">T${wk}</div>${days}<div class="cwt">${ne}${tot}</div>`;
+    }).join('');
+
+    const sum = cd ? `${(cd.runDist / 1000).toFixed(0)} km · ${fmtTime(cd.zatSec) || '0:00'}` : '—';
+    return `<div class="cal-card">
+      <div class="cal-h"><b${cd && cd.hasNezp ? ' class="nz"' : ''}>C${num}</b><span>${fmtDateObj(mon)} – ${fmtDateObj(sun)}</span><em>${sum}</em></div>
+      <div class="cal-g"><div></div>${CAL_DOW.map(d => `<div class="cdow">${d}</div>`).join('')}<div class="cdow">km</div>${weeks}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="cal-wrap">
+    <div class="cal-legend">
+      <span>běh za den (vůči nejdelšímu dni sportovce${maxKm ? ', ' + maxKm.toFixed(1) + ' km' : ''}):</span>
+      ${[1, 2, 3, 4].map(l => `<i class="cd l${l}"></i>`).join('')}
+      <span><i class="cd other"></i>jiný sport</span>
+      <span><i class="cd race"></i>závod</span>
+      <span><i class="cd sick"></i>nemoc</span>
+      <span><span class="pips"><i class="run"></i><i class="oth"></i><i class="nz"></i></span>čtverečky vpravo nahoře = aktivity dne, když jsou víc nebo nezpracovaná (plná = běh, prázdná = jiný sport, červená = nezpracováno)</span>
+      <span><i class="cd"></i>bez aktivity</span>
+    </div>
+    <div class="cal-grid">${cards}</div>
+  </div>`;
 }
 
 function renderMain(uid) {
@@ -438,7 +549,11 @@ function renderMain(uid) {
         ${pillNezp}
       </div>
     </div>
-    <div class="table-wrap">
+    <div class="view-sw">
+      <button data-v="table" class="${detailView === 'table' ? 'on' : ''}">Tabulka</button>
+      <button data-v="cal" class="${detailView === 'cal' ? 'on' : ''}">Kalendář</button>
+    </div>
+    ${detailView === 'cal' ? calHtml(uid) : `<div class="table-wrap">
       <table>
         <thead>
           <tr>
@@ -450,7 +565,14 @@ function renderMain(uid) {
         </thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>`);
+    </div>`}`);
+
+  document.querySelectorAll('.cd.has').forEach(el =>
+    el.addEventListener('click', e => calOpenPop(e, el.dataset.date))
+  );
+  document.querySelectorAll('.view-sw button').forEach(b =>
+    b.addEventListener('click', () => { detailView = b.dataset.v; renderMain(uid); })
+  );
 
   document.querySelectorAll('.cr').forEach(row => {
     row.addEventListener('click', () => {
@@ -1052,6 +1174,256 @@ async function renderSeasons() {
   drawDetail(); drawList();
 }
 
+/* ── Plan vs. reality ──────────────────────────────────────────
+   Compares the planned running km per cycle (plan.json, one value per level)
+   with the km actually logged by one athlete this training year. The level
+   an athlete trains in is picked here and only remembered in this browser. */
+
+const pv = { plan: null, level: {}, uid: null, year: null, cache: {} };
+
+const pvStartTs = s => Date.parse(s.start + 'T00:00:00Z');
+/* "27.10.–23.11.2025" for the cycle with 0-based index c of a season */
+function pvRange(s, c) {
+  const a = new Date(pvStartTs(s) + c * WEEKS_PER_CYCLE * WEEK_MS);
+  const b = new Date(a.getTime() + (WEEKS_PER_CYCLE * WEEK_MS - DAY_MS));
+  const d = x => `${x.getUTCDate()}.${x.getUTCMonth() + 1}.`;
+  return `${d(a)} – ${d(b)}${b.getUTCFullYear()}`;
+}
+
+async function pvLoadPlan() {
+  if (pv.plan) return pv.plan;
+  const r = await fetch(chrome.runtime.getURL('plan.json'));
+  pv.plan = await r.json();
+  return pv.plan;
+}
+
+/* Per-week running km and activity count of this training year, from the athlete's log */
+async function pvLoadWeeks(a, season) {
+  const key = season.year + ':' + a.userId;
+  if (pv.cache[key]) return pv.cache[key];
+  const t0 = pvStartTs(season);
+  const raw   = await apiFetchRetry(`/team/detail/${a.team}/athlete/${a.userId}/training-log`);
+  const weeks = Array.from({ length: CYCLES_PER_YEAR * WEEKS_PER_CYCLE }, () => ({ km: 0, n: 0 }));
+  for (const e of Object.values(raw.results?.data || {})) {
+    const d = (e.startDate || e.date || '').slice(0, 10);
+    if (!d) continue;
+    const wi = Math.floor((Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) - t0) / WEEK_MS);
+    if (wi < 0 || wi >= weeks.length) continue;
+    weeks[wi].n++;
+    if (isRunSport(e.sport)) weeks[wi].km += (e.distance || e.movingDistance || 0) / 1000;
+  }
+  return (pv.cache[key] = weeks);
+}
+
+/* Planned (line) vs. actual (bars) km per cycle; one axis, both in km */
+function pvChart(S, data) {
+  const W = 760, H = 240, ml = 40, mr = 12, mt = 12, mb = 38;
+  const n   = data.length;
+  const top = Math.max(1, ...data.map(d => Math.max(d.pl, d.started ? d.real : 0)));
+  const nm  = szNiceMax(top), ymax = nm.max;
+  const slot = (W - ml - mr) / n, bw = Math.min(28, slot * 0.5);
+  const X = i => ml + slot * (i + 0.5);
+  const Y = v => mt + (1 - v / ymax) * (H - mt - mb);
+
+  const wrap = szNode('div', 'sz-card pv-chart');
+  const legend = szNode('div', 'sz-legend pv-legend');
+  const sw1 = szNode('span'); sw1.append(szNode('i', 'pv-sw-bar'), document.createTextNode('Skutečnost (km běhu)'));
+  const sw2 = szNode('span'); sw2.append(szNode('i', 'pv-sw-line'), document.createTextNode('Plán'));
+  legend.append(sw1, sw2);
+  wrap.appendChild(legend);
+
+  const svg = szSvg('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img',
+                             'aria-label': 'Plánované a skutečné kilometry po cyklech' });
+  for (let t = 0; t <= ymax + 1e-9; t += nm.step) {
+    szSvg('line', { x1: ml, x2: W - mr, y1: Y(t), y2: Y(t), stroke: t === 0 ? 'var(--border)' : 'var(--border-sub)', 'stroke-width': 1 }, svg);
+    szSvg('text', { x: ml - 6, y: Y(t) + 4, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--text-muted)' }, svg).textContent = String(t);
+  }
+  data.forEach((d, i) => {
+    szSvg('text', { x: X(i), y: H - 20, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--text-muted)' }, svg).textContent = d.c.label;
+    if (d.gaps) {
+      szSvg('circle', { cx: X(i), cy: H - 8, r: 3, fill: 'var(--alert)' }, svg);
+      szSvg('text', { x: X(i) + 7, y: H - 4.5, 'font-size': 10, fill: 'var(--text-sec)' }, svg).textContent = d.gaps + '×';
+    }
+    if (d.started && d.real > 0) {
+      const y = Y(d.real), h = Y(0) - y, r = Math.min(4, bw / 2, h);
+      szSvg('path', { d: `M${X(i) - bw / 2},${Y(0)} V${y + r} Q${X(i) - bw / 2},${y} ${X(i) - bw / 2 + r},${y} H${X(i) + bw / 2 - r} Q${X(i) + bw / 2},${y} ${X(i) + bw / 2},${y + r} V${Y(0)} Z`,
+                  fill: 'var(--accent)', opacity: d.finished ? 1 : 0.45 }, svg);
+    }
+  });
+  szSvg('polyline', { points: data.map((d, i) => X(i) + ',' + Y(d.pl)).join(' '), fill: 'none',
+                      stroke: 'var(--text)', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+  data.forEach((d, i) =>
+    szSvg('circle', { cx: X(i), cy: Y(d.pl), r: 4, fill: 'var(--text)', stroke: 'var(--surface)', 'stroke-width': 2 }, svg));
+
+  /* hover: one column per cycle, tooltip with plan, actual and gaps */
+  const band = szSvg('rect', { y: mt, height: H - mt - mb, width: slot, fill: 'var(--hover)', visibility: 'hidden' }, svg);
+  const hit  = szSvg('rect', { x: ml, y: 0, width: W - ml - mr, height: H, fill: 'transparent' }, svg);
+  hit.addEventListener('pointermove', ev => {
+    const r = svg.getBoundingClientRect();
+    const i = Math.max(0, Math.min(n - 1, Math.floor(((ev.clientX - r.left) * W / r.width - ml) / slot)));
+    const d = data[i];
+    band.setAttribute('x', ml + slot * i); band.setAttribute('visibility', 'visible');
+    const t = szTip();
+    t.replaceChildren(szNode('div', 'h', `Cyklus ${d.c.label} · ${pvRange(S, i)}`));
+    const row = (k, v) => { const e = szNode('div', 'r'); e.append(szNode('b', null, v), szNode('span', null, k)); t.appendChild(e); };
+    row('plán', d.pl + ' km');
+    row('skutečnost', d.started ? d.real.toFixed(1) + ' km' + (d.finished ? ` (${Math.round(d.real / d.pl * 100)} %)` : ' (probíhá)') : '—');
+    if (d.gaps) row('týdny bez aktivity', String(d.gaps));
+    t.style.display = 'block';
+    let x = ev.clientX + 14, y = ev.clientY + 14;
+    if (x + t.offsetWidth  > innerWidth  - 8) x = ev.clientX - t.offsetWidth  - 14;
+    if (y + t.offsetHeight > innerHeight - 8) y = ev.clientY - t.offsetHeight - 14;
+    t.style.left = x + 'px'; t.style.top = y + 'px';
+  });
+  hit.addEventListener('pointerleave', () => { band.setAttribute('visibility', 'hidden'); szHideTip(); });
+  wrap.appendChild(svg);
+  return wrap;
+}
+
+async function renderPlan() {
+  sz.active = true;                        // same guard against late async renders
+  const main = document.getElementById('main');
+  const box  = szNode('div', 'state-box');
+  const msg  = szNode('div', null, 'Načítám plán a sportovce…');
+  box.append(szNode('div', 'spinner'), msg);
+  main.replaceChildren(box);
+
+  let plan, roster;
+  try {
+    [plan, roster] = await Promise.all([pvLoadPlan(), szLoadRoster()]);
+    const stored = await chrome.storage.local.get('planLevels');
+    pv.level = stored.planLevels || pv.level;
+  } catch (e) {
+    const err = szNode('div', 'state-box');
+    const retry = szNode('button', 'ghost', 'Zkusit znovu');
+    retry.addEventListener('click', renderPlan);
+    err.append(szNode('div', 'err-txt', 'Chyba: ' + e.message), retry);
+    main.replaceChildren(err);
+    return;
+  }
+  if (!sz.active) return;
+
+  const seasons = plan.seasons.slice().sort((x, y) => y.year - x.year);
+  if (!seasons.some(s => s.year === pv.year)) pv.year = seasons[0].year;
+  const season = () => seasons.find(s => s.year === pv.year);
+
+  const athletes = roster.slice().sort((x, y) => x.lastname.localeCompare(y.lastname, 'cs'));
+  if (!athletes.some(a => a.userId === pv.uid)) pv.uid = athletes.length ? athletes[0].userId : null;
+
+  const root = szNode('div', 'sz-wrap');
+  const bar  = szNode('div', 'sz-bar');
+  const out  = szNode('div');
+
+  const who = szNode('label', 'sz-fl', 'Sportovec');
+  const whoSel = szNode('select');
+  athletes.forEach(a => {
+    const o = szNode('option', null, `${a.lastname} ${a.firstname}${a.current ? '' : ' (bývalý)'}`);
+    o.value = a.userId; whoSel.appendChild(o);
+  });
+  whoSel.value = pv.uid;
+  who.appendChild(whoSel);
+
+  const yr = szNode('label', 'sz-fl', 'Rok plánu');
+  const yrSel = szNode('select');
+  seasons.forEach(s => {
+    const o = szNode('option', null, `${s.year} (${fmtDateObj(new Date(pvStartTs(s)))} – ${fmtDateObj(new Date(pvStartTs(s) + 52 * WEEK_MS - DAY_MS))})`);
+    o.value = s.year; yrSel.appendChild(o);
+  });
+  yrSel.value = pv.year;
+  yr.appendChild(yrSel);
+
+  const lv = szNode('label', 'sz-fl', 'Úroveň v plánu');
+  const lvSel = szNode('select');
+  lv.appendChild(lvSel);
+
+  const lvKey = () => pv.year + ':' + pv.uid;
+  const syncLevel = () => {
+    lvSel.replaceChildren();
+    season().levels.forEach(l => { const o = szNode('option', null, l); o.value = l; lvSel.appendChild(o); });
+    lvSel.value = pv.level[lvKey()] || season().levels[0];
+  };
+  whoSel.addEventListener('change', () => { pv.uid = +whoSel.value; syncLevel(); draw(); });
+  yrSel.addEventListener('change', () => { pv.year = +yrSel.value; syncLevel(); draw(); });
+  lvSel.addEventListener('change', async () => {
+    pv.level[lvKey()] = lvSel.value;
+    await chrome.storage.local.set({ planLevels: pv.level });
+    draw();
+  });
+  syncLevel();
+  bar.append(yr, who, lv);
+
+  async function draw() {
+    const a = athletes.find(x => x.userId === pv.uid);
+    if (!a) { out.replaceChildren(szNode('div', 'sz-note', 'Žádní sportovci k zobrazení.')); return; }
+    out.replaceChildren(szNode('div', 'sz-note', 'Načítám tréninkový deník…'));
+    let weeks;
+    const S = season(), t0 = pvStartTs(S);
+    try { weeks = await pvLoadWeeks(a, S); }
+    catch (e) { if (pv.uid === a.userId) out.replaceChildren(szNode('div', 'sz-warn', 'Deník se nepodařilo načíst: ' + e.message)); return; }
+    if (pv.uid !== a.userId || season() !== S || !sz.active) return;
+
+    const level = pv.level[lvKey()] || S.levels[0];
+    const now   = Date.now();
+    const tb    = szNode('table', 'sz-table');
+    const hr    = szNode('tr');
+    ['Cyklus', 'Plán km', 'Skutečnost km', 'Rozdíl', '% plánu', 'Týdny (běh)'].forEach(t => hr.appendChild(szNode('th', null, t)));
+    tb.appendChild(szNode('thead')).appendChild(hr);
+    const body = szNode('tbody');
+    let sumPlan = 0, sumReal = 0, gaps = 0;
+    const data = [];
+
+    S.cycles.forEach(c => {
+      const w0   = (c.n - 1) * WEEKS_PER_CYCLE;
+      const ws   = weeks.slice(w0, w0 + WEEKS_PER_CYCLE);
+      const real = ws.reduce((s, w) => s + w.km, 0);
+      const pl   = c.km[level];
+      const started  = t0 + w0 * WEEK_MS <= now;
+      const finished = t0 + (w0 + WEEKS_PER_CYCLE) * WEEK_MS <= now;
+      const tr = szNode('tr');
+      tr.style.cursor = 'default';
+      tr.appendChild(szNode('td', null, `${c.label} · ${pvRange(S, c.n - 1)}`));
+      tr.appendChild(szNode('td', null, String(pl)));
+      if (!started) {
+        ['—', '—', '—'].forEach(t => tr.appendChild(szNode('td', 'dim', t)));
+      } else {
+        tr.appendChild(szNode('td', null, real.toFixed(1) + (finished ? '' : ' (probíhá)')));
+        tr.appendChild(szNode('td', finished ? null : 'dim', finished ? (real - pl >= 0 ? '+' : '') + (real - pl).toFixed(0) : '—'));
+        tr.appendChild(szNode('td', finished ? null : 'dim', finished ? Math.round(real / pl * 100) + ' %' : '—'));
+        if (finished) { sumPlan += pl; sumReal += real; }
+      }
+      const strip = szNode('td', 'pv-strip');
+      const d = { c, pl, real, started, finished, gaps: 0 };
+      data.push(d);
+      ws.forEach((w, i) => {
+        const wStart = t0 + (w0 + i) * WEEK_MS;
+        const past = wStart + WEEK_MS <= now;
+        const empty = past && w.n === 0, noRun = past && w.n > 0 && w.km === 0;
+        if (empty) { gaps++; d.gaps++; }
+        const chip = szNode('span', 'pv-chip' + (!past && wStart > now ? ' fut' : '') + (empty ? ' gap' : noRun ? ' norun' : ''),
+                            wStart > now ? '·' : w.km.toFixed(0));
+        chip.title = empty ? 'bez jakékoli aktivity' : noRun ? 'aktivity, ale žádný běh' : `${w.km.toFixed(1)} km běhu`;
+        strip.appendChild(chip);
+      });
+      tr.appendChild(strip);
+      body.appendChild(tr);
+    });
+    tb.appendChild(body);
+
+    const wrap = szNode('div', 'sz-card'); wrap.appendChild(tb);
+    const sum = szNode('p', 'sz-note',
+      `Dokončené cykly: plán ${sumPlan} km, skutečnost ${sumReal.toFixed(0)} km` +
+      (sumPlan ? ` (${Math.round(sumReal / sumPlan * 100)} % plánu)` : '') +
+      `. Týdnů bez jakékoli aktivity: ${gaps}.`);
+    out.replaceChildren(pvChart(S, data), sum, wrap,
+      szNode('p', 'sz-note', 'Plán je z přehledu objemů (plánované km na cyklus). Týdenní plán v km neexistuje, proto se porovnává po cyklech. ' +
+        'Týden bez aktivity může být nemoc, zranění i pauza – z deníku se to rozlišit nedá. Zvýrazněné týdny: červeně bez aktivity, žlutě bez běhu.'));
+  }
+
+  root.append(bar, out);
+  main.replaceChildren(root);
+  draw();
+}
+
 /* ── Wire-up ───────────────────────────────────────────────── */
 
 document.getElementById('btn-connect').addEventListener('click', () => {
@@ -1100,6 +1472,7 @@ document.getElementById('nav-totals').addEventListener('click', e => {
   szHideTip();
   document.querySelectorAll('.ath-item').forEach(el => el.classList.remove('active'));
   document.getElementById('nav-seasons').classList.remove('active');
+  document.getElementById('nav-plan').classList.remove('active');
   document.getElementById('nav-totals').classList.add('active');
   renderTotals();
 });
@@ -1110,16 +1483,31 @@ document.getElementById('nav-seasons').addEventListener('click', e => {
   state.selected = null;
   document.querySelectorAll('.ath-item').forEach(el => el.classList.remove('active'));
   document.getElementById('nav-totals').classList.remove('active');
+  document.getElementById('nav-plan').classList.remove('active');
   document.getElementById('nav-seasons').classList.add('active');
   renderSeasons();
+});
+
+document.getElementById('nav-plan').addEventListener('click', e => {
+  e.preventDefault();
+  if (!state.token) return;
+  state.selected = null;
+  szHideTip();
+  document.querySelectorAll('.ath-item').forEach(el => el.classList.remove('active'));
+  document.getElementById('nav-totals').classList.remove('active');
+  document.getElementById('nav-seasons').classList.remove('active');
+  document.getElementById('nav-plan').classList.add('active');
+  renderPlan();
 });
 
 document.getElementById('btn-reset').addEventListener('click', async () => {
   await chrome.storage.local.remove('token');
   Object.assign(state, { token: null, athletes: [], selected: null, cache: {}, expCyc: {}, expWk: {} });
   Object.assign(sz, { active: false, roster: null, agg: {}, sel: null });
+  Object.assign(pv, { uid: null, year: null, cache: {} });
   document.getElementById('nav-seasons').classList.remove('active');
   document.getElementById('nav-totals').classList.remove('active');
+  document.getElementById('nav-plan').classList.remove('active');
   document.getElementById('app').style.display   = 'none';
   document.getElementById('setup').style.display = 'flex';
   document.getElementById('tok-input').value     = '';
