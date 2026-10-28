@@ -115,11 +115,47 @@ async function apiFetch(path) {
 
 /* ── Data processing ───────────────────────────────────────── */
 
-function buildCache(detailRaw, logRaw) {
+/* Sickness records live in the athlete's calendar (type "sickness", entered in
+   Tréninkáč as a from–to period), not in the statistics. Returns the set of
+   YYYY-MM-DD days covered by any sickness. An end at exactly 00:00 on a later
+   day is read as exclusive (all-day calendar convention); a date-only end,
+   or any other time, is inclusive. */
+function calSickDates(calRaw) {
+  const list = calRaw?.results?.data?.activityList;
+  if (!Array.isArray(list)) return null;             // unexpected shape → treat the calendar as unavailable
+  const out = new Set();
+  const day  = s => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
+  for (const e of list) {
+    if (e.type !== 'sickness' || !e.start) continue;
+    const from = String(e.start).slice(0, 10);
+    const rawTo = String(e.end || e.start);
+    let   to   = rawTo.slice(0, 10);
+    const midnight = /[T ]00:00(:00(\.0+)?)?(Z|[+-]00:?00)?$/.test(rawTo);
+    let endTs = day(to);
+    if (midnight && endTs > day(from)) endTs -= DAY_MS;
+    for (let ts = day(from), n = 0; ts <= endTs && n < 366; ts += DAY_MS, n++)
+      out.add(new Date(ts).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/* Statistics, training log and calendar of one athlete. The calendar is only
+   needed for sick days, so a failed fetch falls back to the statistics. */
+async function loadAthlete(uid) {
+  const [detailRaw, logRaw, calRaw] = await Promise.all([
+    apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}`),
+    apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}/training-log`),
+    apiFetchRetry(`/team/detail/${TEAM_ID}/athlete/${uid}/calendar`, 3).catch(() => null)
+  ]);
+  return buildCache(detailRaw, logRaw, calRaw);
+}
+
+function buildCache(detailRaw, logRaw, calRaw) {
   const d    = detailRaw.results.data;
   const wo   = d.weekOverview       || {};
   const sbw  = d.sumByWeeks         || {};
   const sick = d.sickDaysInCycles   || [];
+  const sickDates = calRaw ? calSickDates(calRaw) : null;   // null → calendar not available
 
   // Normalise entries: accept both startDate and date fields
   const allLogEntries = Object.values(logRaw.results?.data || {}).map(e => ({
@@ -132,27 +168,28 @@ function buildCache(detailRaw, logRaw) {
     e => e._date >= SEASON_START && e._date <= SEASON_END
   );
 
-  /* ── Plan data, re-keyed by ISO week ─────────────────────
-     The API groups plan weeks into cycles of its own, and that grouping
-     drifts per athlete whenever weeks are missing. Cycles here come from
-     the calendar instead, so the API's cycle numbers are dropped and only
-     the ISO week number of each plan row is kept. */
-  const planWeek = {};                      // isoWeek → weekOverview row
+  /* ── Tréninkáč statistics, re-keyed by ISO week ──────────
+     Weekly stats that Tréninkáč computes itself from processed activities
+     (not the training plan in plan.json). The API groups them into cycles
+     of its own, and that grouping drifts per athlete whenever weeks are
+     missing. Cycles here come from the calendar instead, so the API's cycle
+     numbers are dropped and only the ISO week number of each row is kept. */
+  const statsWeek = {};                     // isoWeek → weekOverview row
   for (const rows of Object.values(wo))
-    for (const r of rows) planWeek[r.week] = r;
+    for (const r of rows) statsWeek[r.week] = r;
 
-  const planSport = {};                     // isoWeek → sumByWeeks rows
+  const statsSport = {};                    // isoWeek → sumByWeeks rows
   for (const rows of Object.values(sbw))
-    for (const r of rows) (planSport[r.week] = planSport[r.week] || []).push(r);
+    for (const r of rows) (statsSport[r.week] = statsSport[r.week] || []).push(r);
 
-  const planSick = {};                      // isoWeek → sick days
+  const statsSick = {};                     // isoWeek → sick days
   for (const c of sick)
     for (const w of (c.weeks || []))
-      planSick[w.week] = (planSick[w.week] || 0) + (w.sickdays || 0);
+      statsSick[w.week] = (statsSick[w.week] || 0) + (w.sickdays || 0);
 
   /* ── Season calendar ─────────────────────────────────────
      Week `wi` is the (wi+1)-th week of the training year; its ISO week
-     number is only a label (and the key the plan API uses). */
+     number is only a label (and the key the statistics API uses). */
   const weekMeta    = [];                   // wi → { week, isoYear, mon, sun }
   const wiOfIsoWeek = {};                   // isoWeek → wi
   for (let wi = 0; wi < SEASON_WEEKS; wi++) {
@@ -189,18 +226,26 @@ function buildCache(detailRaw, logRaw) {
 
   const nezp = logEntries.filter(e => e.time === null && e.movingTime != null).length;
 
-  /* ── Cycles that carry any data (plan rows or activities) ── */
+  const sickByWi = {};                      // wi → sick days (from the calendar)
+  for (const iso of sickDates || []) {
+    const wi = weekIndexOf(iso);
+    if (wi >= 0 && wi < SEASON_WEEKS) sickByWi[wi] = (sickByWi[wi] || 0) + 1;
+  }
+
+  /* ── Cycles that carry any data (statistics rows, activities or sickness) ── */
   const activeCycles = new Set();
-  for (const isoWeek of Object.keys(planWeek)) {
+  for (const isoWeek of Object.keys(statsWeek)) {
     const wi = wiOfIsoWeek[isoWeek];
     if (wi != null) activeCycles.add(Math.floor(wi / WEEKS_PER_CYCLE));
   }
   for (const wi of Object.keys(actsByWi))
     activeCycles.add(Math.floor(Number(wi) / WEEKS_PER_CYCLE));
+  for (const wi of Object.keys(sickByWi))
+    activeCycles.add(Math.floor(Number(wi) / WEEKS_PER_CYCLE));
 
   /* ── Build cycleData ─────────────────────────────────────
      Every cycle spans its full 4 calendar weeks, whether or not the
-     athlete has a plan or any activity in them. */
+     athlete has statistics or any activity in them. */
   const activsByWeek = {};                  // `${cycleNum}-${isoWeek}` → [activity]
 
   const cycleData = [...activeCycles].sort((a, b) => a - b).map(ci => {
@@ -214,13 +259,22 @@ function buildCache(detailRaw, logRaw) {
       const nezpA = acts.filter(a => a.nezp);
       activsByWeek[`${num}-${meta.week}`] = acts;
 
-      // A planned week already counts its processed activities in the plan
-      // stats, so only nezp ones are added. An unplanned week has no plan
-      // stats at all, so every activity in it counts.
-      const pw      = planWeek[meta.week];
-      const planned = pw != null;
-      const ps      = planSport[meta.week] || [];
-      const add     = planned ? nezpA : acts;
+      // A week with statistics already counts its processed activities in
+      // them, so only nezp ones are added. A week without statistics has
+      // none, so every activity in it counts.
+      const pw       = statsWeek[meta.week];
+      const hasStats = pw != null;
+      const ps       = statsSport[meta.week] || [];
+      const add      = hasStats ? nezpA : acts;
+
+      // Sick days: the calendar's sickness records when available. Otherwise
+      // (calendar fetch failed) Tréninkáč's own statistics count and days with
+      // an activity flagged as sick; those can describe the same days, so the
+      // larger is taken instead of the sum.
+      const flagSick = new Set(acts.filter(a => a.isSick).map(a => a.date)).size;
+      const sickDays = sickDates
+        ? (sickByWi[ci * WEEKS_PER_CYCLE + k] || 0)
+        : Math.max(statsSick[meta.week] || 0, flagSick);
 
       weeks.push({
         week:    meta.week,
@@ -228,13 +282,13 @@ function buildCache(detailRaw, logRaw) {
         mon:     meta.mon,
         sun:     meta.sun,
         hasNezp: nezpA.length > 0,
-        DZ:      (planned ? (pw.day_load       || 0) : 0) + new Set(add.map(a => a.date)).size,
-        FA:      (planned ? (pw.activity_count || 0) : 0) + add.length,
-        ZA:      (planned ? (pw.raceCount      || 0) : 0) + add.filter(a => a.isRace).length,
-        NE:      (planned ? (planSick[meta.week] || 0) : 0) + add.filter(a => a.isSick).length,
-        runDist: (planned ? ps.filter(e => e.kind === 'run').reduce((s, e) => s + (e.distance || 0), 0) : 0)
+        DZ:      (hasStats ? (pw.day_load       || 0) : 0) + new Set(add.map(a => a.date)).size,
+        FA:      (hasStats ? (pw.activity_count || 0) : 0) + add.length,
+        ZA:      (hasStats ? (pw.raceCount      || 0) : 0) + add.filter(a => a.isRace).length,
+        NE:      sickDays,
+        runDist: (hasStats ? ps.filter(e => e.kind === 'run').reduce((s, e) => s + (e.distance || 0), 0) : 0)
                  + add.filter(a => isRunSport(a.sport)).reduce((s, a) => s + a.dist, 0),
-        zatSec:  (planned ? ps.reduce((s, e) => s + (e.time || 0), 0) : 0)
+        zatSec:  (hasStats ? ps.reduce((s, e) => s + (e.time || 0), 0) : 0)
                  + add.reduce((s, a) => s + a.movTime, 0)
       });
     }
@@ -255,7 +309,7 @@ function buildCache(detailRaw, logRaw) {
     };
   });
 
-  return { cycleData, nezp, activsByWeek };
+  return { cycleData, nezp, activsByWeek, sickDates };
 }
 
 /* ── Rendering ─────────────────────────────────────────────── */
@@ -297,11 +351,7 @@ async function selectAthlete(uid) {
   setMain(`<div class="state-box"><div class="spinner"></div><div>Načítám…</div></div>`);
   try {
     if (!state.cache[uid]?.cycleData) {
-      const [detailRaw, logRaw] = await Promise.all([
-        apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}`),
-        apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}/training-log`)
-      ]);
-      state.cache[uid] = buildCache(detailRaw, logRaw);
+      state.cache[uid] = await loadAthlete(uid);
     }
     renderMain(uid);
     renderSidebar();
@@ -389,7 +439,7 @@ document.addEventListener('click', e => { if (!e.target.closest('#cal-pop, .cd.h
 document.addEventListener('keydown', e => { if (e.key === 'Escape') calClosePop(); });
 
 function calHtml(uid) {
-  const { cycleData, activsByWeek } = state.cache[uid];
+  const { cycleData, activsByWeek, sickDates } = state.cache[uid];
   const todayTs = Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
   const dayKm = {};                                    // date → run km, for the shading scale
   calDays = {};
@@ -421,13 +471,13 @@ function calHtml(uid) {
         const da  = acts.filter(a => a.date === iso);
         const km  = dayKm[iso] || 0;
         const other = da.some(a => !isRunSport(a.sport));
-        const race  = da.some(a => a.isRace), sick = da.some(a => a.isSick), nezp = da.some(a => a.nezp);
+        const race  = da.some(a => a.isRace), sick = da.some(a => a.isSick) || !!sickDates?.has(iso), nezp = da.some(a => a.nezp);
         const sec   = da.reduce((s, a) => s + a.movTime, 0);
         const cls = ['cd', 'l' + lvl(km), ts > todayTs ? 'fut' : '', ts === todayTs ? 'today' : '',
                      race ? 'race' : '', sick ? 'sick' : '', nezp ? 'nezp' : '', da.length ? 'has' : '', !km && other ? 'other' : ''].filter(Boolean).join(' ');
         const tip = `${dn} ${fmtDateObj(d)}` + (da.length
           ? ` · ${da.length > 1 ? da.length + '× aktivita · ' : ''}${km ? km.toFixed(1) + ' km běh' : 'bez běhu'}${other ? ' · jiný sport' : ''}${sec ? ' · zátěž ' + fmtTime(sec) : ''}${race ? ' · závod' : ''}${sick ? ' · nemoc' : ''}${nezp ? ' · nezpracováno' : ''}${da.length ? ' · klikněte pro odkaz' : ''}`
-          : ' · bez aktivity');
+          : sick ? ' · nemoc (bez aktivity)' : ' · bez aktivity');
         const label = d.getUTCDate() === 1 ? `${d.getUTCDate()}.${d.getUTCMonth() + 1}.` : d.getUTCDate();
         // one pip per activity when a day has several (or an unprocessed one): filled = run, hollow = other sport, red = unprocessed
         const pips = da.length < 2 && !nezp ? '' : '<span class="pips">' + da.slice(0, 4).map(a =>
@@ -471,6 +521,9 @@ function renderMain(uid) {
   const totBeh = cycleData.reduce((s, c) => s + c.runDist, 0);
   const totZ   = cycleData.reduce((s, c) => s + c.zatSec, 0);
 
+  const pillSick = state.cache[uid].sickDates
+    ? ''
+    : `<span class="pill alert" title="Kalendář s nemocemi se nepodařilo načíst, NE je jen ze statistik a může být neúplné">NE ze statistik</span>`;
   const pillNezp = nezp > 0
     ? `<span class="pill alert"><strong>${nezp}</strong> nezprac.</span>`
     : '';
@@ -546,7 +599,7 @@ function renderMain(uid) {
         <span class="pill"><strong>${totFA}</strong> aktivit</span>
         <span class="pill"><strong>${(totBeh / 1000).toFixed(0)} km</strong> b&#283;h</span>
         <span class="pill"><strong>${fmtTime(totZ) || '&#8212;'}</strong> z&#225;t&#283;&#382;</span>
-        ${pillNezp}
+        ${pillNezp}${pillSick}
       </div>
     </div>
     <div class="view-sw">
@@ -668,11 +721,7 @@ async function renderTotals() {
   await Promise.all(state.athletes.map(async a => {
     if (!state.cache[a.userId]?.cycleData) {
       try {
-        const [detailRaw, logRaw] = await Promise.all([
-          apiFetch(`/team/detail/${TEAM_ID}/athlete/${a.userId}`),
-          apiFetch(`/team/detail/${TEAM_ID}/athlete/${a.userId}/training-log`)
-        ]);
-        state.cache[a.userId] = buildCache(detailRaw, logRaw);
+        state.cache[a.userId] = await loadAthlete(a.userId);
       } catch (_) {}
     }
   }));
@@ -731,7 +780,7 @@ async function renderTotals() {
 /* ── Seasons page ──────────────────────────────────────────────
    Progress of every athlete across training years, regardless of the team
    the year was run in. Built from each athlete's own training log (which
-   spans all years), so it does not depend on the team plan data. Cycles
+   spans all years), so it does not depend on the team statistics data. Cycles
    come from the same calendar as above, shifted back by 52 weeks per year.
    Athletes are collected from the current team and the two previous ones. */
 

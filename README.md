@@ -158,3 +158,4 @@ Klikněte na tlačítko **↺ Změnit token** v pravém horním rohu dashboardu.
 | **1.0.1** | 9.9.2026 | Oprava zařazení do cyklů |
 | **1.1.0** | 25.10.2026 | Nová záložka Sezóny (pokrok napříč sezónami, včetně bývalých členů). Běh km počítá jen běžecké sporty, u nezpracovaných aktivit se zobrazí sport. Vysvětlení Běh km a Zátěž v záložkách. |
 | **1.2.0** | 27.10.2026 | Nová záložka Plán vs. realita (plán objemů po cyklech vs. skutečnost, výběr roku, graf). V pohledu sportovce přepínač Tabulka / Kalendář s 13 kalendáři cyklů. |
+| **1.2.1** | 28.10.2026 | Oprava nemocí (NE): berou se ze záznamů nemocí v kalendáři sportovce (od–do), v kalendářním pohledu jsou vidět i dny nemoci bez aktivity. |

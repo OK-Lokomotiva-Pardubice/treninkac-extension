@@ -23,8 +23,9 @@ Auth: Bearer token stored in chrome.storage.local under key "token"
 
 Endpoints used:
   GET /team/117/stats                                      → athlete list
-  GET /team/detail/117/athlete/:uid                        → cycle/week plan + sport stats
+  GET /team/detail/117/athlete/:uid                        → Tréninkáč weekly/cycle statistics + sport stats (not the training plan)
   GET /team/detail/117/athlete/:uid/training-log           → individual activity log
+  GET /team/detail/117/athlete/:uid/calendar               → results.data.activityList[]: events of type activity | sickness | regeneration (sickness = a from–to record, `start`/`end`)
   GET /team/{117,108,8}/stats                              → rosters for the Sezóny page
   GET /team/detail/{team}/athlete/:uid/training-log        → same log, fetched via the team the athlete belongs to
 ```
@@ -32,13 +33,13 @@ Endpoints used:
 Training year: `2025-10-27` – `2026-10-25` (activities outside this range are filtered out).
 
 ### Seasons are separate teams
-Every training year is its own team: `8` = 2022-10-31..2023-10-29, `108` = 2023-10-30..2024-10-27, `117` = 2025-10-27..2026-10-25. The 2024/25 team no longer exists. The training log endpoint ignores period parameters and returns the athlete's **whole history**, so cross-season numbers are rebuilt from the log alone (the plan data is per team and has no sick days).
+Every training year is its own team: `8` = 2022-10-31..2023-10-29, `108` = 2023-10-30..2024-10-27, `117` = 2025-10-27..2026-10-25. The 2024/25 team no longer exists. The training log endpoint ignores period parameters and returns the athlete's **whole history**, so cross-season numbers are rebuilt from the log alone (the statistics endpoint is per team and is the only source of sick days).
 
 ### Unprocessed ("nezp") activities
 Entries with `time === null && movingTime != null`. They have `sport`, `name`, `startDate`, `movingTime` and `movingDistance`, but **no `distance`**. Always read distance as `distance || movingDistance`.
 
 ### km vs Zátěž
-**Běh km** counts only running sports (`isRunSport`), also for unprocessed activities and unplanned weeks. **Zátěž** sums the time of all sports. Both include unprocessed activities (explained in `UNITS_NOTE`, shown on the Celkové součty and Sezóny pages).
+**Běh km** counts only running sports (`isRunSport`), also for unprocessed activities and weeks without statistics. **Zátěž** sums the time of all sports. Both include unprocessed activities (explained in `UNITS_NOTE`, shown on the Celkové součty and Sezóny pages).
 
 ### Flaky network
 Short outages are frequent. The Sezóny page loads through `apiFetchRetry` (15 s timeout, up to 5 attempts for network and 5xx errors). `apiFetch` (used elsewhere) does not retry.
@@ -65,7 +66,7 @@ curl -s \
   -H "Authorization: Bearer $TOKEN" \
   "https://treninkac-api.orientacnisporty.cz/api/team/117/stats"
 
-# Cycle/week plan + sport stats for one athlete
+# Tréninkáč cycle/week statistics + sport stats for one athlete
 curl -s \
   -H "Authorization: Bearer $TOKEN" \
   "https://treninkac-api.orientacnisporty.cz/api/team/detail/117/athlete/12345"
@@ -103,10 +104,13 @@ For the other two endpoints substitute the URL; no request body is needed for an
   weeks: [{ week, isoYear, mon, sun, hasNezp, DZ, FA, ZA, NE, runDist, zatSec }]
 }
 ```
-`week` is the ISO week number (the label shown as `T44`, and the key the plan API uses); `mon`/`sun` are the authoritative dates.
+`week` is the ISO week number (the label shown as `T44`, and the key the statistics API uses); `mon`/`sun` are the authoritative dates.
 
-**Planned week** (the plan API has a row for its ISO week) — stats = plan stats + nezp activity contributions (processed activities are already inside the plan stats).  
-**Unplanned week** — no plan row, so stats are computed entirely from that week's activities.
+Terminology: "statistics" = what the API returns for an athlete (`weekOverview`, `sumByWeeks`, `sickDaysInCycles`; computed by Tréninkáč from processed activities). The **training plan** is something else: `plan.json`.
+
+**Week with statistics** (a `weekOverview` row exists for its ISO week) — stats = statistics + nezp activity contributions (processed activities are already inside the statistics).  
+**Week without statistics** — no row, so stats are computed entirely from that week's activities.  
+**NE (sick days)** comes from the **calendar** endpoint, not from the statistics: every `type: "sickness"` event (a from–to period entered by hand in Tréninkáč) is expanded into days (`calSickDates`) and counted per calendar week. An `end` at exactly 00:00 on a later day is treated as exclusive, anything else as inclusive (an assumption — check it against a known sickness). If the calendar fetch fails or has an unexpected shape, NE falls back to `max(sickdays from sickDaysInCycles, distinct days with an activity flagged isSick)` and the athlete header shows a red "NE ze statistik" pill. `buildCache` also returns `sickDates` (Set of YYYY-MM-DD) for the calendar view.
 
 ### Activity fields (normalised inside `buildCache`)
 ```js
@@ -123,7 +127,7 @@ For the other two endpoints substitute the URL; no request body is needed for an
 
 ### Cycle calendar — the one rule that matters
 Cycles are **driven by the calendar, never by the athlete's activities or by the API's own cycle grouping**
-(that grouping drifts per athlete whenever plan weeks are missing, which is why it is discarded).
+(that grouping drifts per athlete whenever statistics weeks are missing, which is why it is discarded).
 
 * The training year starts Monday `SEASON_START` (`2025-10-27`, ISO 2025-W44).
 * Every cycle spans exactly **4 consecutive weeks**, always all 4 — empty weeks included.
@@ -133,7 +137,7 @@ So C1 = 27.10.2025–23.11.2025, C9 = 08.06.2026–05.07.2026, C13 = 28.09.2026�
 
 Internally everything is keyed by the **absolute week index** `wi` (0–51) since `SEASON_START`:
 `weekIndexOf(dateStr)` → `wi`, `weekMonday(wi)` → UTC Date, cycle index = `Math.floor(wi / WEEKS_PER_CYCLE)`,
-cycle number = `(cycleIdx % CYCLES_PER_YEAR) + 1`. ISO week numbers are only labels and plan-API keys,
+cycle number = `(cycleIdx % CYCLES_PER_YEAR) + 1`. ISO week numbers are only labels and statistics-API keys,
 resolved via `isoWeekOfTs(ts)`; no year guessing is involved.
 
 ## Key functions in `popup.js`
@@ -202,7 +206,7 @@ sz = {               // Sezóny page
 - Cycle/week drill-down with expandable activity rows
 - Activity name links to detail page on treninkac.orientacnisporty.cz
 - Cycles fixed by the calendar (4 weeks each, 13 per training year) — same boundaries for every athlete
-- Activities in weeks with no training plan still counted, in their calendar cycle
+- Activities in weeks without statistics still counted, in their calendar cycle
 - Nezpracované (unprocessed) activities counted into week/cycle sums
 - Red highlighting on cycle/week names when nezp activities present
 - Date range (DD.MM.YYYY – DD.MM.YYYY) shown next to cycle and week names
