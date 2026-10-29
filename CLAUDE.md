@@ -30,10 +30,11 @@ Endpoints used:
   GET /team/detail/{team}/athlete/:uid/training-log        → same log, fetched via the team the athlete belongs to
 ```
 
-Training year: `2025-10-27` – `2026-10-25` (activities outside this range are filtered out).
+Training years are listed in `SEASONS` (`popup.js`: `label`, `team`, `start`, `end`). A header dropdown picks the year shown on the athlete, totals and calendar pages (`useSeason` sets `TEAM_ID`, `SEASON_START/END`, …); the default is the year containing today. Activities outside the selected range are filtered out. Sezóny follows the dropdown too (it shows that year and up to 3 before it, never later ones); Plán uses the dropdown too (plan season matched by `start`; a year without a `plan.json` entry shows a note).
+**New season checklist:** append an entry to `SEASONS` (Monday start, end = the Sunday 363 days later). If Tréninkáč just moves the existing team's from–to range (as happened for team 117 in 2026), set `stats: false` on the previous year's entry — the team's statistics then only describe the newest year (they are keyed by ISO week, so they would be mixed up), and that year is computed from the log and calendar alone. A year with its own team just sets `team`. Add a `plan.json` season when the plan arrives.
 
 ### Seasons are separate teams
-Every training year is its own team: `8` = 2022-10-31..2023-10-29, `108` = 2023-10-30..2024-10-27, `117` = 2025-10-27..2026-10-25. The 2024/25 team no longer exists. The training log endpoint ignores period parameters and returns the athlete's **whole history**, so cross-season numbers are rebuilt from the log alone (the statistics endpoint is per team and is the only source of sick days).
+Every training year is its own team: `8` = 2022-10-31..2023-10-29, `108` = 2023-10-30..2024-10-27, `117` = 2025-10-27..2026-10-25 until Oct 2026, when its range was moved to 2026-10-26..2027-10-24 (same team, no new ID). The 2024/25 team no longer exists. The training log endpoint ignores period parameters and returns the athlete's **whole history**, so cross-season numbers are rebuilt from the log alone (the statistics endpoint is per team and is the only source of sick days).
 
 ### Unprocessed ("nezp") activities
 Entries with `time === null && movingTime != null`. They have `sport`, `name`, `startDate`, `movingTime` and `movingDistance`, but **no `distance`**. Always read distance as `distance || movingDistance`.
@@ -151,7 +152,7 @@ resolved via `isoWeekOfTs(ts)`; no year guessing is involved.
 | `renderTotals()` | Load all athletes + render sortable totals table |
 | `renderSeasons()` | Sezóny page: load rosters + logs, render controls, detail charts and grid/table |
 | `szLoadAll(onProgress)` / `szLoadRoster()` | Fetch athletes of teams 117/108/8 (deduplicated by userId) and their logs, 6 in parallel |
-| `szAggregate(entries)` | Sum a log into per-cycle running km and load hours for each of the `SZ_COUNT` (4) seasons |
+| `szAggregate(entries)` | Sum a log into per-cycle running km and load hours for each of the `SZ_ALL` (5) aggregated seasons; `szWindow()` picks the `SZ_COUNT` (4) shown ones, ending at the header-dropdown season |
 | `szChart(ath, metric, opts)` | SVG line chart (large detail or small grid card) with crosshair + tooltip |
 | `apiFetchRetry(path)` | `apiFetch` with timeout and retries for short outages |
 | `weekIndexOf(dateStr)` | Absolute week index (0-based) of a `YYYY-MM-DD` date since `SEASON_START` |
@@ -212,8 +213,8 @@ sz = {               // Sezóny page
 - Date range (DD.MM.YYYY – DD.MM.YYYY) shown next to cycle and week names
 - ⎘ copy button on cycle rows — copies DZ/FA/ZA/NE/Zátěž/Běh km as TSV for Google Sheets
 - **Celkové součty** page: all athletes loaded in parallel, sortable summary table
-- **Sezóny** page: progress of every athlete (current and former members of teams 117/108/8) across the last 4 training years, per cycle, as small-multiple line charts (Běh km / Zátěž) or a table; default sort by volume
-- **Plán vs. realita** page: per athlete and training year, planned vs. actual running km per cycle — chart (bars = actual, line = plan, red dot = weeks without any activity), summary and a table with weekly chips. The plan level is picked per athlete and year and remembered in `chrome.storage.local` (`planLevels`)
+- **Sezóny** page: progress of every athlete (current and former members of teams 117/108/8) across the last 4 training years, per cycle, as small-multiple line charts (Běh km / Zátěž) or a table; default sort by volume of the newest shown year
+- **Plán vs. realita** page: per athlete and the training year picked in the header dropdown, planned vs. actual running km per cycle — chart (bars = actual, line = plan, red dot = weeks without any activity), summary and a table with weekly chips. The plan level is picked per athlete and year and remembered in `chrome.storage.local` (`planLevels`)
 - **Kalendář** toggle in the athlete view (next to Tabulka): 13 small calendars, one per cycle, days shaded by run km; pips top-right per activity when a day has several or an unprocessed one (red), click a day for links to its activities
 
 ## Releasing

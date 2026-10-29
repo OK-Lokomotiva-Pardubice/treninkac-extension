@@ -1,7 +1,6 @@
 ﻿'use strict';
 
 const API     = 'https://treninkac-api.orientacnisporty.cz/api';
-const TEAM_ID = 117;
 
 const state = {
   token:    null,
@@ -36,13 +35,23 @@ function sportName(sport) {
    the training year starts on SEASON_START (a Monday), every cycle spans
    exactly 4 consecutive weeks, and after 13 cycles (= 52 weeks) a new
    training year begins again at C1. */
-const SEASON_START    = '2025-10-27';
-const SEASON_END      = '2026-10-25';
+/* One entry per training year, oldest first. Team 117 had its from–to range
+   moved to the new year instead of a new team being created, so its
+   statistics now only describe the newest year: older years that still live
+   in the same team get `stats: false` and are computed from the training log
+   (and the calendar) alone. A year that gets its own team just sets `team`.
+   Adding a year: append an entry, nothing else needs to change. */
+const SEASONS = [
+  { label: '2025/26', team: 117, stats: false, start: '2025-10-27', end: '2026-10-25' },
+  { label: '2026/27', team: 117,               start: '2026-10-26', end: '2027-10-24' }
+];
 const WEEKS_PER_CYCLE = 4;
 const CYCLES_PER_YEAR = 13;
 const DAY_MS          = 86400000;
 const WEEK_MS         = 7 * DAY_MS;
-const SEASON_START_TS = Date.parse(SEASON_START + 'T00:00:00Z');
+
+/* The season shown on the athlete, totals and calendar pages (see useSeason) */
+let season, TEAM_ID, HAS_STATS, SEASON_START, SEASON_END, SEASON_START_TS, SEASON_WEEKS;
 
 /* Absolute week index (0-based) of a YYYY-MM-DD date since SEASON_START */
 function weekIndexOf(dateStr) {
@@ -55,7 +64,17 @@ function weekMonday(wi) {
   return new Date(SEASON_START_TS + wi * WEEK_MS);
 }
 
-const SEASON_WEEKS = weekIndexOf(SEASON_END) + 1;   // 52
+function useSeason(s) {
+  season          = s;
+  TEAM_ID         = s.team;
+  HAS_STATS       = s.stats !== false;          // statistics endpoint matches this year's dates
+  SEASON_START    = s.start;
+  SEASON_END      = s.end;
+  SEASON_START_TS = Date.parse(s.start + 'T00:00:00Z');
+  SEASON_WEEKS    = weekIndexOf(s.end) + 1;     // 52
+}
+/* default: the training year that contains today */
+useSeason(SEASONS.filter(s => s.start <= new Date().toISOString().slice(0, 10)).pop() || SEASONS[0]);
 
 /* ISO week number + ISO year of a UTC timestamp */
 function isoWeekOfTs(ts) {
@@ -143,7 +162,7 @@ function calSickDates(calRaw) {
    needed for sick days, so a failed fetch falls back to the statistics. */
 async function loadAthlete(uid) {
   const [detailRaw, logRaw, calRaw] = await Promise.all([
-    apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}`),
+    HAS_STATS ? apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}`) : { results: { data: {} } },
     apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}/training-log`),
     apiFetchRetry(`/team/detail/${TEAM_ID}/athlete/${uid}/calendar`, 3).catch(() => null)
   ]);
@@ -659,17 +678,43 @@ function renderMain(uid) {
 
 /* ── Auth ──────────────────────────────────────────────────── */
 
+async function loadRoster() {
+  const data = await apiFetch(`/team/${TEAM_ID}/stats`);
+  state.athletes = (data.results.data.stats || [])
+    .filter(a => a.role === 'athlete')
+    .sort((a, b) => a.lastname.localeCompare(b.lastname, 'cs'));
+}
+
+function initSeasonPicker() {
+  const sel = document.getElementById('season-sel');
+  sel.replaceChildren(...SEASONS.map((s, i) => Object.assign(document.createElement('option'), { value: i, textContent: s.label })));
+  sel.value = SEASONS.indexOf(season);
+  sel.onchange = () => switchSeason(+sel.value);
+}
+
+/* Athlete, totals and calendar pages show one training year; Sezóny and Plán span all of them */
+async function switchSeason(i) {
+  useSeason(SEASONS[i]);
+  Object.assign(state, { cache: {}, expCyc: {}, expWk: {} });
+  try { await loadRoster(); } catch (e) { setMain(`<div class="state-box"><div class="err-txt">Chyba: ${e.message}</div></div>`); return; }
+  renderSidebar();
+  state.athletes.forEach(a => prefetchNezp(a.userId));
+  if (document.getElementById('nav-totals').classList.contains('active')) renderTotals();
+  else if (document.getElementById('nav-seasons').classList.contains('active')) renderSeasons();
+  else if (document.getElementById('nav-plan').classList.contains('active')) renderPlan();
+  else if (state.selected != null && state.athletes.some(a => a.userId === state.selected)) selectAthlete(state.selected);
+  else if (!sz.active) { state.selected = null; setMain('<div class="state-box">&#8592; Vyberte sportovce</div>'); }
+}
+
 async function connect(token) {
   state.token = token;
   document.getElementById('setup-err').textContent = '';
   try {
-    const data = await apiFetch(`/team/${TEAM_ID}/stats`);
-    state.athletes = (data.results.data.stats || [])
-      .filter(a => a.role === 'athlete')
-      .sort((a, b) => a.lastname.localeCompare(b.lastname, 'cs'));
+    await loadRoster();
     await chrome.storage.local.set({ token });
     document.getElementById('setup').style.display = 'none';
     document.getElementById('app').style.display   = 'flex';
+    initSeasonPicker();
     renderSidebar();
     state.athletes.forEach(a => prefetchNezp(a.userId));
   } catch (e) {
@@ -679,12 +724,14 @@ async function connect(token) {
 }
 
 async function prefetchNezp(uid) {
+  const forSeason = season;
   try {
     const raw     = await apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}/training-log`);
     const entries = Object.values(raw.results?.data || {}).filter(e => {
       const d = (e.startDate || e.date || '').slice(0, 10);
-      return d >= '2025-10-27' && d <= '2026-10-25';
+      return d >= SEASON_START && d <= SEASON_END;
     });
+    if (forSeason !== season) return;       // the season was switched meanwhile
     if (!state.cache[uid]) state.cache[uid] = {};
     if (state.cache[uid].nezp == null) {
       state.cache[uid].nezp = entries.filter(e => e.time === null && e.movingTime != null).length;
@@ -759,7 +806,7 @@ async function renderTotals() {
 
   main.innerHTML = `
     <div class="totals-wrap">
-      <h2>Celkové součty — sezóna 2025/2026</h2>
+      <h2>Celkové součty — sezóna ${season.label}</h2>
       <p class="totals-note">${UNITS_NOTE}</p>
       <table class="totals-table">
         <thead><tr>${thead}</tr></thead>
@@ -784,16 +831,29 @@ async function renderTotals() {
    come from the same calendar as above, shifted back by 52 weeks per year.
    Athletes are collected from the current team and the two previous ones. */
 
-const SZ_TEAMS    = [TEAM_ID, 108, 8];     // newest first; first hit decides which team a log is fetched through
-const SZ_COUNT    = 4;                     // this training year and the 3 before it
+const SZ_TEAMS    = [...SEASONS.map(s => s.team).reverse(), 108, 8]
+  .filter((t, i, a) => a.indexOf(t) === i);   // newest first; first hit decides which team a log is fetched through
+const SZ_ANCHOR_TS = Date.parse(SEASONS[SEASONS.length - 1].start + 'T00:00:00Z');   // newest year
+const SZ_COUNT    = 4;                     // years shown: the one picked in the header dropdown and up to 3 before it
+const SZ_ALL      = 5;                     // years aggregated (oldest data: team 8, 2022/23)
 const SZ_LEN_MS   = CYCLES_PER_YEAR * WEEKS_PER_CYCLE * WEEK_MS;
 const SZ_CYCLE_MS = WEEKS_PER_CYCLE * WEEK_MS;
-const SZ_FIRST_TS = SEASON_START_TS - (SZ_COUNT - 1) * SZ_LEN_MS;
+const SZ_FIRST_TS = SZ_ANCHOR_TS - (SZ_ALL - 1) * SZ_LEN_MS;
 
-const SZ_LABELS = Array.from({ length: SZ_COUNT }, (_, i) => {
+const SZ_ALL_LABELS = Array.from({ length: SZ_ALL }, (_, i) => {
   const y = new Date(SZ_FIRST_TS + i * SZ_LEN_MS).getUTCFullYear();
   return `${y}/${String((y + 1) % 100).padStart(2, '0')}`;
 });
+
+/* The years on screen: the season picked in the header dropdown is the newest,
+   up to SZ_COUNT years end at it. `end`/`off` index the aggregated years. */
+function szWindow() {
+  const end = Math.max(0, SZ_ALL - 1 - (SEASONS.length - 1 - SEASONS.indexOf(season)));
+  const n   = Math.min(SZ_COUNT, end + 1);
+  return { end, n, off: end - n + 1 };
+}
+const szLabels = () => { const w = szWindow(); return SZ_ALL_LABELS.slice(w.off, w.end + 1); };
+const szLine   = i => SZ_LINE[SZ_COUNT - szWindow().n + i];   // newest shown year always gets the lightest line
 
 /* oldest → newest; the ramp validates as one hue on the dark card surface */
 const SZ_LINE = [
@@ -844,7 +904,7 @@ async function szLoadRoster() {
     for (const a of d.results.data.stats || []) {
       if (a.role !== 'athlete' || byId.has(a.userId)) continue;
       byId.set(a.userId, { userId: a.userId, firstname: a.firstname, lastname: a.lastname,
-                           team: SZ_TEAMS[i], current: SZ_TEAMS[i] === TEAM_ID });
+                           team: SZ_TEAMS[i], current: i === 0 });
     }
   });
   sz.roster = [...byId.values()];
@@ -853,13 +913,13 @@ async function szLoadRoster() {
 
 /* Sum a training log into per-cycle running km and load hours for each year */
 function szAggregate(entries) {
-  const seasons = Array.from({ length: SZ_COUNT }, () => ({ n: 0, km: Array(13).fill(0), h: Array(13).fill(0) }));
+  const seasons = Array.from({ length: SZ_ALL }, () => ({ n: 0, km: Array(13).fill(0), h: Array(13).fill(0) }));
   for (const e of entries) {
     const d = (e.startDate || e.date || '').slice(0, 10);
     if (!d) continue;
     const off = Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) - SZ_FIRST_TS;
     const si  = Math.floor(off / SZ_LEN_MS);
-    if (off < 0 || si >= SZ_COUNT) continue;
+    if (off < 0 || si >= SZ_ALL) continue;
     const c = Math.floor((off % SZ_LEN_MS) / SZ_CYCLE_MS);
     const s = seasons[si];
     s.n++;
@@ -914,13 +974,23 @@ function szSvg(tag, attrs, parent) {
 /* newest season with a non-zero value of the selected metric, and its change
    against the season right before it */
 function szLatest(ath) {
-  for (let i = SZ_COUNT - 1; i >= 0; i--) if (szTotal(ath, i) > 0) return i;
+  for (let i = szWindow().n - 1; i >= 0; i--) if (szTotal(ath, i) > 0) return i;
   return -1;
 }
+/* Number of finished cycles (0–13) of season index si */
+function szDone(si) {
+  return Math.max(0, Math.min(CYCLES_PER_YEAR,
+    Math.floor((Date.now() - (SZ_FIRST_TS + (szWindow().off + si) * SZ_LEN_MS)) / SZ_CYCLE_MS)));
+}
+/* Change of the newest season against the one before it, over the cycles the
+   newest one has finished (so a season in progress is not compared with a whole one) */
 function szDelta(ath) {
   const li = szLatest(ath);
   if (li < 1) return null;
-  const a = szTotal(ath, li - 1), b = szTotal(ath, li);
+  const k = szDone(li);
+  if (!k) return null;
+  const head = i => szSum(ath.seasons[i][sz.metric]?.slice(0, k));
+  const a = head(li - 1), b = head(li);
   return a && b != null ? b / a - 1 : null;
 }
 const szFmtDelta = d => d == null ? '—' : (d >= 0 ? '▲ +' : '▼ ') + (d * 100).toFixed(0) + ' %';
@@ -943,9 +1013,9 @@ function szShowTip(ev, cycle, rows, fmt) {
   rows.slice().reverse().forEach(r => {
     const d = szNode('div', 'r');
     const k = szSvg('svg', { viewBox: '0 0 14 6' });
-    szSvg('line', { x1: 0, x2: 14, y1: 3, y2: 3, stroke: SZ_LINE[r.i].color,
-                    'stroke-width': 2, 'stroke-dasharray': SZ_LINE[r.i].dash }, k);
-    d.append(k, szNode('b', null, r.v == null ? '—' : fmt(r.v)), szNode('span', null, SZ_LABELS[r.i]));
+    szSvg('line', { x1: 0, x2: 14, y1: 3, y2: 3, stroke: szLine(r.i).color,
+                    'stroke-width': 2, 'stroke-dasharray': szLine(r.i).dash }, k);
+    d.append(k, szNode('b', null, r.v == null ? '—' : fmt(r.v)), szNode('span', null, szLabels()[r.i]));
     t.appendChild(d);
   });
   t.style.display = 'block';
@@ -986,8 +1056,8 @@ function szChart(ath, metric, o) {
 
   series.forEach(s => {
     const pts = s.v.map((v, c) => v == null ? null : X(c) + ',' + Y(v)).filter(Boolean);
-    szSvg('polyline', { points: pts.join(' '), fill: 'none', stroke: SZ_LINE[s.i].color,
-      'stroke-width': big ? SZ_LINE[s.i].w : SZ_LINE[s.i].w - 0.5, 'stroke-dasharray': SZ_LINE[s.i].dash,
+    szSvg('polyline', { points: pts.join(' '), fill: 'none', stroke: szLine(s.i).color,
+      'stroke-width': big ? szLine(s.i).w : szLine(s.i).w - 0.5, 'stroke-dasharray': szLine(s.i).dash,
       'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
   });
 
@@ -999,7 +1069,7 @@ function szChart(ath, metric, o) {
   const newest = series.length ? series[series.length - 1].i : -1;
   ends.forEach(e => {
     if (big || e.i === newest)
-      szSvg('circle', { cx: e.x, cy: e.y, r: big ? 4 : 3, fill: SZ_LINE[e.i].color, stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
+      szSvg('circle', { cx: e.x, cy: e.y, r: big ? 4 : 3, fill: szLine(e.i).color, stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
   });
   if (big) {
     const L = ends.map(e => ({ i: e.i, y: e.y })).sort((a, b) => a.y - b.y);
@@ -1008,12 +1078,12 @@ function szChart(ath, metric, o) {
       const lim = H - mb - (L.length - 1 - k) * 13;
       if (L[k].y > lim) L[k].y = lim;
     }
-    L.forEach(l => szSvg('text', { x: W - mr + 8, y: l.y + 4, 'font-size': 11, fill: 'var(--text-sec)' }, svg).textContent = SZ_LABELS[l.i]);
+    L.forEach(l => szSvg('text', { x: W - mr + 8, y: l.y + 4, 'font-size': 11, fill: 'var(--text-sec)' }, svg).textContent = szLabels()[l.i]);
   }
 
   /* hover: the crosshair snaps to the nearest cycle, one tooltip lists every season */
   const cross = szSvg('line', { y1: mt, y2: H - mb, stroke: 'var(--border)', 'stroke-width': 1, visibility: 'hidden' }, svg);
-  const dots  = series.map(s => szSvg('circle', { r: big ? 4 : 3, fill: SZ_LINE[s.i].color, stroke: 'var(--surface)', 'stroke-width': 2, visibility: 'hidden' }, svg));
+  const dots  = series.map(s => szSvg('circle', { r: big ? 4 : 3, fill: szLine(s.i).color, stroke: 'var(--surface)', 'stroke-width': 2, visibility: 'hidden' }, svg));
   const hit   = szSvg('rect', { x: ml - 6, y: 0, width: W - ml - mr + 12, height: H, fill: 'transparent' }, svg);
   if (o.onClick) hit.style.cursor = 'pointer';
   hit.addEventListener('pointermove', ev => {
@@ -1038,13 +1108,16 @@ function szChart(ath, metric, o) {
 
 /* ── page ── */
 function szRows() {
-  let rows = sz.roster.filter(a => sz.agg[a.userId]).map(a => ({ ...a, seasons: sz.agg[a.userId] }));
+  let rows = sz.roster.filter(a => sz.agg[a.userId]).map(a => ({ ...a, seasons: sz.agg[a.userId].slice(szWindow().off, szWindow().end + 1) }));
   if (sz.who === 'current') rows = rows.filter(a => a.current);
   if (sz.who === 'former')  rows = rows.filter(a => !a.current);
   const name = a => `${a.lastname} ${a.firstname}`;
   if (sz.sort === 'name')  rows.sort((a, b) => name(a).localeCompare(name(b), 'cs'));
   if (sz.sort === 'delta') rows.sort((a, b) => (szDelta(b) ?? -9) - (szDelta(a) ?? -9));
-  if (sz.sort === 'vol')   rows.sort((a, b) => (szTotal(b, SZ_COUNT - 1) || 0) - (szTotal(a, SZ_COUNT - 1) || 0));
+  if (sz.sort === 'vol') {
+    const si = szWindow().n - 1;           // the season picked in the header dropdown
+    rows.sort((a, b) => (szTotal(b, si) || 0) - (szTotal(a, si) || 0));
+  }
   return rows;
 }
 
@@ -1103,10 +1176,10 @@ async function renderSeasons() {
   const list   = szNode('div');
 
   const legend = szNode('div', 'sz-legend');
-  SZ_LABELS.forEach((l, i) => {
+  szLabels().forEach((l, i) => {
     const sp = szNode('span');
     const k  = szSvg('svg', { viewBox: '0 0 22 8' });
-    szSvg('line', { x1: 0, x2: 22, y1: 4, y2: 4, stroke: SZ_LINE[i].color, 'stroke-width': SZ_LINE[i].w, 'stroke-dasharray': SZ_LINE[i].dash }, k);
+    szSvg('line', { x1: 0, x2: 22, y1: 4, y2: 4, stroke: szLine(i).color, 'stroke-width': szLine(i).w, 'stroke-dasharray': szLine(i).dash }, k);
     sp.append(k, document.createTextNode(l));
     legend.appendChild(sp);
   });
@@ -1117,7 +1190,7 @@ async function renderSeasons() {
     szSeg([['km', 'Běh km'], ['h', 'Zátěž']], 'metric', draw),
     szSeg([['charts', 'Grafy'], ['table', 'Tabulka']], 'view', drawList),
     szSelect('Škála', [['own', 'vlastní u každého'], ['shared', 'společná']], 'scale', drawList),
-    szSelect('Řazení', [['vol', 'objem letos'], ['delta', 'změna oproti předchozí sezóně'], ['name', 'jméno']], 'sort', drawList),
+    szSelect('Řazení', [['vol', 'objem'], ['delta', 'změna oproti předchozí sezóně'], ['name', 'jméno']], 'sort', drawList),
     szSelect('Sportovci', [['all', `všichni (${sz.roster.length})`], ['current', `současní (${nCur})`], ['former', `bývalí (${sz.roster.length - nCur})`]], 'who', draw),
     legend
   );
@@ -1135,7 +1208,7 @@ async function renderSeasons() {
     head.appendChild(szNode('h2', null, `${ath.lastname} ${ath.firstname}`));
     const pills = szNode('div', 'sz-pills');
     ['km', 'h'].forEach(m => {
-      const parts = ath.seasons.map((s, i) => s[m] ? `${SZ_LABELS[i]}: ${SZ_METRIC[m].tot(szSum(s[m]))} ${SZ_METRIC[m].unit}` : null).filter(Boolean);
+      const parts = ath.seasons.map((s, i) => s[m] ? `${szLabels()[i]}: ${SZ_METRIC[m].tot(szSum(s[m]))} ${SZ_METRIC[m].unit}` : null).filter(Boolean);
       const p = szNode('span');
       p.append(szNode('b', null, SZ_METRIC[m].label + ' celkem  '), document.createTextNode(parts.join('  ·  ') || 'bez dat'));
       pills.appendChild(p);
@@ -1171,7 +1244,7 @@ async function renderSeasons() {
         if (!a.current) nm.appendChild(szNode('span', 'sz-tag', 'bývalý'));
         top.append(nm, szNode('span', 'dl', szFmtDelta(szDelta(a))));
         const li  = szLatest(a);
-        const tot = szNode('div', 'tot', li < 0 ? 'bez dat' : `${SZ_LABELS[li]}: ${M.tot(szTotal(a, li))} ${M.unit}`);
+        const tot = szNode('div', 'tot', li < 0 ? 'bez dat' : `${szLabels()[li]}: ${M.tot(szTotal(a, li))} ${M.unit}`);
         card.append(top, tot, szChart(a, sz.metric, { big: false, ymax, onClick: () => pick(a.userId) }));
         card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(a.userId); } });
         grid.appendChild(card);
@@ -1181,7 +1254,7 @@ async function renderSeasons() {
       const wrap = szNode('div', 'sz-card');
       const tb = szNode('table', 'sz-table');
       const hr = szNode('tr');
-      ['Sportovec', ...SZ_LABELS, 'Změna vs předchozí sezóna'].forEach(t => hr.appendChild(szNode('th', null, t)));
+      ['Sportovec', ...szLabels(), 'Změna vs předchozí sezóna'].forEach(t => hr.appendChild(szNode('th', null, t)));
       tb.appendChild(szNode('thead')).appendChild(hr);
       const body = szNode('tbody');
       rows.forEach(a => {
@@ -1191,7 +1264,7 @@ async function renderSeasons() {
         const first = szNode('td', null, `${a.lastname} ${a.firstname}`);
         if (!a.current) first.appendChild(szNode('span', 'sz-tag', 'bývalý'));
         tr.appendChild(first);
-        for (let i = 0; i < SZ_COUNT; i++) {
+        for (let i = 0; i < szWindow().n; i++) {
           const v = szTotal(a, i);
           tr.appendChild(szNode('td', v == null ? 'dim' : null, v == null ? '—' : M.tot(v)));
         }
@@ -1217,8 +1290,8 @@ async function renderSeasons() {
   const units = szNode('p', 'sz-note', UNITS_NOTE);
   units.style.margin = '0 0 14px';
   root.append(units, detail, title, list,
-    szNode('p', 'sz-note', 'Sezóna = 52 týdnů od pondělí, cykly po 4 týdnech od ' + fmtDateObj(new Date(SEASON_START_TS)) +
-      ' (a o násobky 52 týdnů zpět). Nemocné dny se z deníku zrekonstruovat nedají.'));
+    szNode('p', 'sz-note', 'Sezóna = 52 týdnů od pondělí, cykly po 4 týdnech od ' + fmtDateObj(new Date(SZ_ANCHOR_TS)) +
+      ' (a o násobky 52 týdnů zpět). Zobrazuje se sezóna vybraná v hlavičce a až 3 před ní. Změna porovnává jen cykly, které už nejnovější zobrazená sezóna dokončila, se stejnými cykly předchozí sezóny. Nemocné dny se z deníku zrekonstruovat nedají.'));
   main.replaceChildren(root);
   drawDetail(); drawList();
 }
@@ -1228,7 +1301,7 @@ async function renderSeasons() {
    with the km actually logged by one athlete this training year. The level
    an athlete trains in is picked here and only remembered in this browser. */
 
-const pv = { plan: null, level: {}, uid: null, year: null, cache: {} };
+const pv = { plan: null, level: {}, uid: null, cache: {} };
 
 const pvStartTs = s => Date.parse(s.start + 'T00:00:00Z');
 /* "27.10.–23.11.2025" for the cycle with 0-based index c of a season */
@@ -1352,9 +1425,8 @@ async function renderPlan() {
   }
   if (!sz.active) return;
 
-  const seasons = plan.seasons.slice().sort((x, y) => y.year - x.year);
-  if (!seasons.some(s => s.year === pv.year)) pv.year = seasons[0].year;
-  const season = () => seasons.find(s => s.year === pv.year);
+  /* the plan of the training year picked in the header dropdown (matched by its Monday start) */
+  const planSeason = () => plan.seasons.find(s => s.start === season.start);
 
   const athletes = roster.slice().sort((x, y) => x.lastname.localeCompare(y.lastname, 'cs'));
   if (!athletes.some(a => a.userId === pv.uid)) pv.uid = athletes.length ? athletes[0].userId : null;
@@ -1372,44 +1444,39 @@ async function renderPlan() {
   whoSel.value = pv.uid;
   who.appendChild(whoSel);
 
-  const yr = szNode('label', 'sz-fl', 'Rok plánu');
-  const yrSel = szNode('select');
-  seasons.forEach(s => {
-    const o = szNode('option', null, `${s.year} (${fmtDateObj(new Date(pvStartTs(s)))} – ${fmtDateObj(new Date(pvStartTs(s) + 52 * WEEK_MS - DAY_MS))})`);
-    o.value = s.year; yrSel.appendChild(o);
-  });
-  yrSel.value = pv.year;
-  yr.appendChild(yrSel);
-
   const lv = szNode('label', 'sz-fl', 'Úroveň v plánu');
   const lvSel = szNode('select');
   lv.appendChild(lvSel);
 
-  const lvKey = () => pv.year + ':' + pv.uid;
+  const lvKey = () => planSeason().year + ':' + pv.uid;
   const syncLevel = () => {
     lvSel.replaceChildren();
-    season().levels.forEach(l => { const o = szNode('option', null, l); o.value = l; lvSel.appendChild(o); });
-    lvSel.value = pv.level[lvKey()] || season().levels[0];
+    const P = planSeason();
+    lv.style.display = P ? '' : 'none';
+    if (!P) return;
+    P.levels.forEach(l => { const o = szNode('option', null, l); o.value = l; lvSel.appendChild(o); });
+    lvSel.value = pv.level[lvKey()] || P.levels[0];
   };
   whoSel.addEventListener('change', () => { pv.uid = +whoSel.value; syncLevel(); draw(); });
-  yrSel.addEventListener('change', () => { pv.year = +yrSel.value; syncLevel(); draw(); });
   lvSel.addEventListener('change', async () => {
     pv.level[lvKey()] = lvSel.value;
     await chrome.storage.local.set({ planLevels: pv.level });
     draw();
   });
   syncLevel();
-  bar.append(yr, who, lv);
+  bar.append(who, lv);
 
   async function draw() {
     const a = athletes.find(x => x.userId === pv.uid);
     if (!a) { out.replaceChildren(szNode('div', 'sz-note', 'Žádní sportovci k zobrazení.')); return; }
+    const S = planSeason();
+    if (!S) { out.replaceChildren(szNode('div', 'sz-note', `Plán pro sezónu ${season.label} zatím není v plan.json.`)); return; }
     out.replaceChildren(szNode('div', 'sz-note', 'Načítám tréninkový deník…'));
     let weeks;
-    const S = season(), t0 = pvStartTs(S);
+    const t0 = pvStartTs(S);
     try { weeks = await pvLoadWeeks(a, S); }
     catch (e) { if (pv.uid === a.userId) out.replaceChildren(szNode('div', 'sz-warn', 'Deník se nepodařilo načíst: ' + e.message)); return; }
-    if (pv.uid !== a.userId || season() !== S || !sz.active) return;
+    if (pv.uid !== a.userId || planSeason() !== S || !sz.active) return;
 
     const level = pv.level[lvKey()] || S.levels[0];
     const now   = Date.now();
@@ -1553,7 +1620,8 @@ document.getElementById('btn-reset').addEventListener('click', async () => {
   await chrome.storage.local.remove('token');
   Object.assign(state, { token: null, athletes: [], selected: null, cache: {}, expCyc: {}, expWk: {} });
   Object.assign(sz, { active: false, roster: null, agg: {}, sel: null });
-  Object.assign(pv, { uid: null, year: null, cache: {} });
+  Object.assign(pv, { uid: null, cache: {} });
+  useSeason(SEASONS.filter(s => s.start <= new Date().toISOString().slice(0, 10)).pop() || SEASONS[0]);
   document.getElementById('nav-seasons').classList.remove('active');
   document.getElementById('nav-totals').classList.remove('active');
   document.getElementById('nav-plan').classList.remove('active');

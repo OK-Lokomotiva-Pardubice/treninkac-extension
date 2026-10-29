@@ -142,6 +142,149 @@
      }
     }
    ]
+  },
+  {
+   "year": 2027,
+   "start": "2026-10-26",
+   "source": "PLACEHOLDER: zkopírováno z 2026, nahradit správnými čísly",
+   "levels": [
+    "kasper+",
+    "kasper",
+    "emil",
+    "simone"
+   ],
+   "cycles": [
+    {
+     "n": 1,
+     "label": "I",
+     "km": {
+      "kasper+": 150,
+      "kasper": 131,
+      "emil": 111,
+      "simone": 85
+     }
+    },
+    {
+     "n": 2,
+     "label": "II",
+     "km": {
+      "kasper+": 186,
+      "kasper": 162,
+      "emil": 137,
+      "simone": 105
+     }
+    },
+    {
+     "n": 3,
+     "label": "III",
+     "km": {
+      "kasper+": 212,
+      "kasper": 185,
+      "emil": 156,
+      "simone": 120
+     }
+    },
+    {
+     "n": 4,
+     "label": "IV",
+     "km": {
+      "kasper+": 230,
+      "kasper": 200,
+      "emil": 169,
+      "simone": 130
+     }
+    },
+    {
+     "n": 5,
+     "label": "V",
+     "km": {
+      "kasper+": 212,
+      "kasper": 185,
+      "emil": 156,
+      "simone": 120
+     }
+    },
+    {
+     "n": 6,
+     "label": "VI",
+     "km": {
+      "kasper+": 177,
+      "kasper": 154,
+      "emil": 130,
+      "simone": 100
+     }
+    },
+    {
+     "n": 7,
+     "label": "VII",
+     "km": {
+      "kasper+": 159,
+      "kasper": 139,
+      "emil": 117,
+      "simone": 90
+     }
+    },
+    {
+     "n": 8,
+     "label": "VIII",
+     "km": {
+      "kasper+": 159,
+      "kasper": 139,
+      "emil": 117,
+      "simone": 90
+     }
+    },
+    {
+     "n": 9,
+     "label": "IX",
+     "km": {
+      "kasper+": 195,
+      "kasper": 169,
+      "emil": 143,
+      "simone": 110
+     }
+    },
+    {
+     "n": 10,
+     "label": "X",
+     "km": {
+      "kasper+": 212,
+      "kasper": 185,
+      "emil": 156,
+      "simone": 120
+     }
+    },
+    {
+     "n": 11,
+     "label": "XI",
+     "km": {
+      "kasper+": 159,
+      "kasper": 139,
+      "emil": 117,
+      "simone": 90
+     }
+    },
+    {
+     "n": 12,
+     "label": "XII",
+     "km": {
+      "kasper+": 159,
+      "kasper": 139,
+      "emil": 117,
+      "simone": 90
+     }
+    },
+    {
+     "n": 13,
+     "label": "XIII",
+     "km": {
+      "kasper+": 89,
+      "kasper": 77,
+      "emil": 65,
+      "simone": 50
+     }
+    }
+   ]
   }
  ]
 }

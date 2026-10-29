@@ -176,6 +176,15 @@ header .flex1 { flex: 1; }
 }
 .h-nav-link:hover, .h-nav-link.active { background: var(--hover); color: var(--text); }
 
+.h-season {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
 .h-btn {
   background: none;
   border: 1px solid var(--border);
@@ -724,6 +733,7 @@ td.num { text-align: right; }
     <span class="h-logo">Tr&#233;nink&#225;&#269;</span>
     <div class="h-sep"></div>
     <span class="h-team">Dorost LPU</span>
+    <select class="h-season" id="season-sel" title="Tr&#233;ninkov&#253; rok (rozhoduje o str&#225;nk&#225;ch Sportovec a Celkov&#233; sou&#269;ty)"></select>
     <div class="h-sep"></div>
     <a class="h-nav-link" id="nav-totals" href="#">Celkov&#233; sou&#269;ty</a>
     <a class="h-nav-link" id="nav-seasons" href="#">Sez&#243;ny</a>
