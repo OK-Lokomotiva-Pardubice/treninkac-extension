@@ -146,9 +146,8 @@
   {
    "year": 2027,
    "start": "2026-10-26",
-   "source": "PLACEHOLDER: zkopírováno z 2026, nahradit správnými čísly",
+   "source": "součty Dorost27.xlsx",
    "levels": [
-    "kasper+",
     "kasper",
     "emil",
     "simone"
@@ -158,9 +157,8 @@
      "n": 1,
      "label": "I",
      "km": {
-      "kasper+": 150,
-      "kasper": 131,
-      "emil": 111,
+      "kasper": 136,
+      "emil": 110.5,
       "simone": 85
      }
     },
@@ -168,58 +166,52 @@
      "n": 2,
      "label": "II",
      "km": {
-      "kasper+": 186,
-      "kasper": 162,
-      "emil": 137,
-      "simone": 105
+      "kasper": 160,
+      "emil": 130,
+      "simone": 100
      }
     },
     {
      "n": 3,
      "label": "III",
      "km": {
-      "kasper+": 212,
-      "kasper": 185,
-      "emil": 156,
-      "simone": 120
+      "kasper": 184,
+      "emil": 149.5,
+      "simone": 115
      }
     },
     {
      "n": 4,
      "label": "IV",
      "km": {
-      "kasper+": 230,
       "kasper": 200,
-      "emil": 169,
-      "simone": 130
+      "emil": 162.5,
+      "simone": 125
      }
     },
     {
      "n": 5,
      "label": "V",
      "km": {
-      "kasper+": 212,
-      "kasper": 185,
-      "emil": 156,
-      "simone": 120
+      "kasper": 184,
+      "emil": 149.5,
+      "simone": 115
      }
     },
     {
      "n": 6,
      "label": "VI",
      "km": {
-      "kasper+": 177,
-      "kasper": 154,
-      "emil": 130,
-      "simone": 100
+      "kasper": 168,
+      "emil": 136.5,
+      "simone": 105
      }
     },
     {
      "n": 7,
      "label": "VII",
      "km": {
-      "kasper+": 159,
-      "kasper": 139,
+      "kasper": 144,
       "emil": 117,
       "simone": 90
      }
@@ -228,28 +220,25 @@
      "n": 8,
      "label": "VIII",
      "km": {
-      "kasper+": 159,
-      "kasper": 139,
-      "emil": 117,
-      "simone": 90
+      "kasper": 136,
+      "emil": 110.5,
+      "simone": 85
      }
     },
     {
      "n": 9,
      "label": "IX",
      "km": {
-      "kasper+": 195,
-      "kasper": 169,
-      "emil": 143,
-      "simone": 110
+      "kasper": 160,
+      "emil": 130,
+      "simone": 100
      }
     },
     {
      "n": 10,
      "label": "X",
      "km": {
-      "kasper+": 212,
-      "kasper": 185,
+      "kasper": 192,
       "emil": 156,
       "simone": 120
      }
@@ -258,18 +247,16 @@
      "n": 11,
      "label": "XI",
      "km": {
-      "kasper+": 159,
-      "kasper": 139,
-      "emil": 117,
-      "simone": 90
+      "kasper": 192,
+      "emil": 156,
+      "simone": 120
      }
     },
     {
      "n": 12,
      "label": "XII",
      "km": {
-      "kasper+": 159,
-      "kasper": 139,
+      "kasper": 144,
       "emil": 117,
       "simone": 90
      }
@@ -278,8 +265,7 @@
      "n": 13,
      "label": "XIII",
      "km": {
-      "kasper+": 89,
-      "kasper": 77,
+      "kasper": 80,
       "emil": 65,
       "simone": 50
      }
