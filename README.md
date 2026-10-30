@@ -107,18 +107,18 @@ U každého řádku cyklu se při najetí myší zobrazí ikona **⎘**. Kliknut
 
 ### Celkové součty
 
-Odkaz **Celkové součty** v horní liště otevře souhrnnou tabulku se součty za celou sezónu pro všechny sportovce najednou. Data se v případě potřeby načtou automaticky.
+Odkaz **Celkové součty** v horní liště otevře souhrnnou tabulku se součty za sezónu pro všechny sportovce najednou. Sezónu vyberete v rozbalovacím seznamu v horní liště (ve výchozím stavu ta aktuální); platí také pro pohled sportovce a záložky Sezóny a Plán vs. realita. Data se v případě potřeby načtou automaticky.
 
 Tabulku lze seřadit kliknutím na záhlaví libovolného sloupce; opakovaným kliknutím se pořadí obrátí.
 
 ### Sezóny
 
-Odkaz **Sezóny** v horní liště ukazuje pokrok každého sportovce napříč tréninkovými roky (aktuální a tři předchozí), bez ohledu na to, v jakém týmu který rok proběhl. Zahrnuje současné i bývalé členy z týmů 117, 108 a 8 (bývalí jsou označeni „bývalý“).
+Odkaz **Sezóny** v horní liště ukazuje pokrok každého sportovce napříč tréninkovými roky (sezóna vybraná v horní liště a až tři předchozí, novější se nezobrazují), bez ohledu na to, v jakém týmu který rok proběhl. Zahrnuje současné i bývalé členy z týmů 117, 108 a 8 (bývalí jsou označeni „bývalý“).
 
 - Pro každého sportovce je malý graf s hodnotami po cyklech C1–C13, každá sezóna jedna čára.
 - Přepínač **Běh km / Zátěž** mění ukazatel, **Grafy / Tabulka** způsob zobrazení.
 - **Škála** může být vlastní u každého sportovce, nebo společná pro všechny.
-- **Řazení** je ve výchozím stavu podle objemu letos, dále podle změny oproti předchozí sezóně a podle jména. Filtr **Sportovci** omezí výběr na současné nebo bývalé členy.
+- **Řazení** je ve výchozím stavu podle objemu vybrané sezóny, dále podle změny oproti předchozí sezóně a podle jména. Filtr **Sportovci** omezí výběr na současné nebo bývalé členy.
 - Kliknutím na sportovce se nahoře zobrazí detail se dvěma většími grafy (km a Zátěž) a po najetí myší se zobrazí hodnoty všech sezón pro daný cyklus.
 
 Data se skládají z tréninkového deníku sportovce, takže nezávisí na týmovém plánu. Nemocné dny (NE) se tak zrekonstruovat nedají.
@@ -127,7 +127,7 @@ Data se skládají z tréninkového deníku sportovce, takže nezávisí na tým
 
 Odkaz **Plán vs. realita** porovná plánované kilometry po cyklech se skutečností jednoho sportovce.
 
-- Nahoře vyberete **rok plánu**, **sportovce** a jeho **úroveň v plánu** (kasper+, kasper, emil, simone). Úroveň se pamatuje jen v tomto prohlížeči, zvlášť pro každého sportovce a rok.
+- Plán se řídí sezónou vybranou v horní liště. Na stránce vyberete **sportovce** a jeho **úroveň v plánu** (pro 2026/27 kasper, emil, simone; pro 2025/26 ještě kasper+). Úroveň se pamatuje jen v tomto prohlížeči, zvlášť pro každého sportovce a sezónu. Pokud pro sezónu plán v `plan.json` není, zobrazí se upozornění.
 - Graf ukazuje skutečné km běhu (sloupce) proti plánu (čára). Červená tečka pod cyklem znamená týdny bez jakékoli aktivity.
 - Pod grafem je souhrn za dokončené cykly a tabulka s rozdílem, % plánu a týdny (červeně bez aktivity, žlutě bez běhu).
 - Plán je v souboru `plan.json` (objemy z přehledu objemů); pro další rok se přidá další položka do `seasons`.
@@ -159,3 +159,5 @@ Klikněte na tlačítko **↺ Změnit token** v pravém horním rohu dashboardu.
 | **1.1.0** | 25.10.2026 | Nová záložka Sezóny (pokrok napříč sezónami, včetně bývalých členů). Běh km počítá jen běžecké sporty, u nezpracovaných aktivit se zobrazí sport. Vysvětlení Běh km a Zátěž v záložkách. |
 | **1.2.0** | 27.10.2026 | Nová záložka Plán vs. realita (plán objemů po cyklech vs. skutečnost, výběr roku, graf). V pohledu sportovce přepínač Tabulka / Kalendář s 13 kalendáři cyklů. |
 | **1.2.1** | 28.10.2026 | Oprava nemocí (NE): berou se ze záznamů nemocí v kalendáři sportovce (od–do), v kalendářním pohledu jsou vidět i dny nemoci bez aktivity. |
+| **1.3.0** | 29.10.2026 | Přechod na sezónu 2026/27. V hlavičce výběr sezóny, který platí pro pohled sportovce, Celkové součty, Sezóny i Plán vs. realita (Sezóny ukazují vybranou sezónu a až tři předchozí). Změna oproti minulé sezóně se počítá jen z dokončených cyklů. |
+| **1.3.1** | 30.10.2026 | Plán objemů pro sezónu 2026/27 (úrovně kasper, emil, simone). |
