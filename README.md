@@ -107,7 +107,7 @@ U každého řádku cyklu se při najetí myší zobrazí ikona **⎘**. Kliknut
 
 ### Celkové součty
 
-Odkaz **Celkové součty** v horní liště otevře souhrnnou tabulku se součty za sezónu pro všechny sportovce najednou. Sezónu vyberete v rozbalovacím seznamu v horní liště (ve výchozím stavu ta aktuální); platí také pro pohled sportovce a záložky Sezóny a Plán vs. realita. Data se v případě potřeby načtou automaticky.
+Vlevo vyberte **Tým** a v pravém panelu záložku **Celkové součty**: souhrnná tabulka se součty za sezónu pro všechny sportovce najednou. Sezónu vyberete v rozbalovacím seznamu v liště nad obsahem (ve výchozím stavu ta aktuální); platí pro všechny záložky. Detail sportovce (Cykly, Sezóny, Plán vs. realita) otevřete kliknutím na jeho jméno v seznamu pod položkou Tým; tlačítko Obnovit data stáhne vše znovu. Data se v případě potřeby načtou automaticky.
 
 Tabulku lze seřadit kliknutím na záhlaví libovolného sloupce; opakovaným kliknutím se pořadí obrátí.
 

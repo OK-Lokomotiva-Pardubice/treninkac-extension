@@ -158,12 +158,21 @@ function calSickDates(calRaw) {
   return out;
 }
 
+/* The training log returns the athlete's whole history whatever the team or year, so it is
+   fetched once per athlete and session and shared by every page (nezp badges, Součty,
+   Sezóny, Plán, Cykly). "Obnovit data" clears it. */
+const logCache = {};
+function getLog(uid, team = TEAM_ID) {
+  return logCache[uid] ||= apiFetchRetry(`/team/detail/${team}/athlete/${uid}/training-log`)
+    .catch(e => { delete logCache[uid]; throw e; });
+}
+
 /* Statistics, training log and calendar of one athlete. The calendar is only
    needed for sick days, so a failed fetch falls back to the statistics. */
 async function loadAthlete(uid) {
   const [detailRaw, logRaw, calRaw] = await Promise.all([
     HAS_STATS ? apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}`) : { results: { data: {} } },
-    apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}/training-log`),
+    getLog(uid),
     apiFetchRetry(`/team/detail/${TEAM_ID}/athlete/${uid}/calendar`, 3).catch(() => null)
   ]);
   return buildCache(detailRaw, logRaw, calRaw);
@@ -335,6 +344,8 @@ function buildCache(detailRaw, logRaw, calRaw) {
 
 function renderSidebar() {
   const el = document.getElementById('ath-list');
+  document.getElementById('nav-team').classList.toggle('active', nav.mode === 'team');
+  document.getElementById('ath-count').textContent = state.athletes.length || '';
   el.innerHTML = state.athletes.map(a => {
     const inits  = (a.firstname[0] + a.lastname[0]).toUpperCase();
     const cached = state.cache[a.userId];
@@ -353,17 +364,13 @@ function renderSidebar() {
       </div>`;
   }).join('');
   el.querySelectorAll('.ath-item').forEach(row =>
-    row.addEventListener('click', () => selectAthlete(+row.dataset.id))
+    row.addEventListener('click', e => setMode('athlete', +row.dataset.id))
   );
 }
 
 async function selectAthlete(uid) {
+  const my = nav.seq;
   state.selected = uid;
-  sz.active = false;
-  szHideTip();
-  document.getElementById('nav-totals')?.classList.remove('active');
-  document.getElementById('nav-seasons')?.classList.remove('active');
-  document.getElementById('nav-plan')?.classList.remove('active');
   if (!state.expCyc[uid]) state.expCyc[uid] = new Set();
   if (!state.expWk[uid])  state.expWk[uid]  = new Set();
   renderSidebar();
@@ -372,10 +379,11 @@ async function selectAthlete(uid) {
     if (!state.cache[uid]?.cycleData) {
       state.cache[uid] = await loadAthlete(uid);
     }
+    if (my !== nav.seq) return;
     renderMain(uid);
     renderSidebar();
   } catch (e) {
-    setMain(`<div class="state-box"><div class="err-txt">Chyba: ${e.message}</div></div>`);
+    if (my === nav.seq) setMain(`<div class="state-box"><div class="err-txt">Chyba: ${e.message}</div></div>`);
   }
 }
 
@@ -685,6 +693,66 @@ async function loadRoster() {
     .sort((a, b) => a.lastname.localeCompare(b.lastname, 'cs'));
 }
 
+/* ── Navigation ────────────────────────────────────────────────
+   Left panel: Tým (comparison of all athletes) or one athlete. Right panel: a bar with the
+   season picker and the tabs of the current mode. nav.seq changes on every render so slow
+   loads of a page the user already left do not paint over the new one. */
+const nav = { mode: 'team', tab: 'seasons', uid: null, seq: 0,
+              last: { team: 'seasons', athlete: 'cycles' } };
+const NAV_TABS = {
+  team:    [['seasons', 'Sezóny'], ['totals', 'Celkové součty']],
+  athlete: [['cycles', 'Cykly'], ['seasons', 'Sezóny'], ['plan', 'Plán vs. realita']]
+};
+
+function setMode(mode, uid) {
+  nav.last[nav.mode] = nav.tab;
+  nav.mode = mode;
+  nav.tab  = nav.last[mode];
+  if (uid != null) nav.uid = uid;
+  render();
+}
+function setTab(tab) { nav.tab = tab; render(); }
+
+function renderSubbar() {
+  const tabs = document.getElementById('tabs');
+  tabs.replaceChildren(...NAV_TABS[nav.mode].map(([k, label]) => {
+    const a = Object.assign(document.createElement('a'), { className: 'tab' + (k === nav.tab ? ' active' : ''), href: '#', textContent: label });
+    a.addEventListener('click', e => { e.preventDefault(); setTab(k); });
+    return a;
+  }));
+  const a = nav.mode === 'athlete' && state.athletes.find(x => x.userId === nav.uid);
+  document.getElementById('sub-name').textContent = a ? `${a.lastname} ${a.firstname}` : '';
+}
+
+function render() {
+  nav.seq++;
+  sz.active = false;
+  szHideTip();
+  state.selected = nav.mode === 'athlete' ? nav.uid : null;
+  renderSidebar();
+  renderSubbar();
+  if (nav.mode === 'team') {
+    sz.solo = false;
+    return nav.tab === 'totals' ? renderTotals() : renderSeasons();
+  }
+  if (nav.tab === 'cycles') return selectAthlete(nav.uid);
+  if (nav.tab === 'seasons') { sz.solo = true; sz.sel = nav.uid; return renderSeasons(); }
+  pv.uid = nav.uid;
+  return renderPlan();
+}
+
+/* Forget everything loaded in this session and load it again */
+function refreshData() {
+  for (const k of Object.keys(logCache)) delete logCache[k];
+  Object.assign(state, { cache: {}, expCyc: {}, expWk: {} });
+  Object.assign(sz, { roster: null, agg: {} });
+  Object.assign(pv, { cache: {}, runs: {} });
+  loadRoster().then(() => {
+    state.athletes.forEach(a => prefetchNezp(a.userId));
+    render();
+  }).catch(e => setMain(`<div class="state-box"><div class="err-txt">Chyba: ${e.message}</div></div>`));
+}
+
 function initSeasonPicker() {
   const sel = document.getElementById('season-sel');
   sel.replaceChildren(...SEASONS.map((s, i) => Object.assign(document.createElement('option'), { value: i, textContent: s.label })));
@@ -697,13 +765,9 @@ async function switchSeason(i) {
   useSeason(SEASONS[i]);
   Object.assign(state, { cache: {}, expCyc: {}, expWk: {} });
   try { await loadRoster(); } catch (e) { setMain(`<div class="state-box"><div class="err-txt">Chyba: ${e.message}</div></div>`); return; }
-  renderSidebar();
+  if (nav.mode === 'athlete' && !state.athletes.some(a => a.userId === nav.uid)) setMode('team');
   state.athletes.forEach(a => prefetchNezp(a.userId));
-  if (document.getElementById('nav-totals').classList.contains('active')) renderTotals();
-  else if (document.getElementById('nav-seasons').classList.contains('active')) renderSeasons();
-  else if (document.getElementById('nav-plan').classList.contains('active')) renderPlan();
-  else if (state.selected != null && state.athletes.some(a => a.userId === state.selected)) selectAthlete(state.selected);
-  else if (!sz.active) { state.selected = null; setMain('<div class="state-box">&#8592; Vyberte sportovce</div>'); }
+  render();
 }
 
 async function connect(token) {
@@ -715,8 +779,8 @@ async function connect(token) {
     document.getElementById('setup').style.display = 'none';
     document.getElementById('app').style.display   = 'flex';
     initSeasonPicker();
-    renderSidebar();
     state.athletes.forEach(a => prefetchNezp(a.userId));
+    render();
   } catch (e) {
     state.token = null;
     document.getElementById('setup-err').textContent = 'Nepodařilo se připojit: ' + e.message;
@@ -726,7 +790,7 @@ async function connect(token) {
 async function prefetchNezp(uid) {
   const forSeason = season;
   try {
-    const raw     = await apiFetch(`/team/detail/${TEAM_ID}/athlete/${uid}/training-log`);
+    const raw     = await getLog(uid);
     const entries = Object.values(raw.results?.data || {}).filter(e => {
       const d = (e.startDate || e.date || '').slice(0, 10);
       return d >= SEASON_START && d <= SEASON_END;
@@ -737,7 +801,7 @@ async function prefetchNezp(uid) {
       state.cache[uid].nezp = entries.filter(e => e.time === null && e.movingTime != null).length;
     }
     renderSidebar();
-    if (state.selected === uid && state.cache[uid].cycleData) renderMain(uid);
+    if (nav.mode === 'athlete' && nav.tab === 'cycles' && nav.uid === uid && state.cache[uid].cycleData) renderMain(uid);
   } catch (_) {}
 }
 
@@ -763,6 +827,7 @@ let totalsSort = { col: 'name', asc: true };
 async function renderTotals() {
   const main = document.getElementById('main');
   main.innerHTML = '<div class="totals-loading">Načítám data…</div>';
+  const my = nav.seq;
 
   // Ensure all athletes are loaded
   await Promise.all(state.athletes.map(async a => {
@@ -772,6 +837,7 @@ async function renderTotals() {
       } catch (_) {}
     }
   }));
+  if (my !== nav.seq) return;
 
   const rows = state.athletes.map(a => {
     const cd = state.cache[a.userId]?.cycleData || [];
@@ -834,7 +900,7 @@ async function renderTotals() {
 const SZ_TEAMS    = [...SEASONS.map(s => s.team).reverse(), 108, 8]
   .filter((t, i, a) => a.indexOf(t) === i);   // newest first; first hit decides which team a log is fetched through
 const SZ_ANCHOR_TS = Date.parse(SEASONS[SEASONS.length - 1].start + 'T00:00:00Z');   // newest year
-const SZ_COUNT    = 4;                     // years shown: the one picked in the header dropdown and up to 3 before it
+const SZ_COUNT    = 4;                     // years shown: the one picked in the season dropdown (bar above the content) and up to 3 before it
 const SZ_ALL      = 5;                     // years aggregated (oldest data: team 8, 2022/23)
 const SZ_LEN_MS   = CYCLES_PER_YEAR * WEEKS_PER_CYCLE * WEEK_MS;
 const SZ_CYCLE_MS = WEEKS_PER_CYCLE * WEEK_MS;
@@ -845,7 +911,7 @@ const SZ_ALL_LABELS = Array.from({ length: SZ_ALL }, (_, i) => {
   return `${y}/${String((y + 1) % 100).padStart(2, '0')}`;
 });
 
-/* The years on screen: the season picked in the header dropdown is the newest,
+/* The years on screen: the season picked in the season dropdown (bar above the content) is the newest,
    up to SZ_COUNT years end at it. `end`/`off` index the aggregated years. */
 function szWindow() {
   const end = Math.max(0, SZ_ALL - 1 - (SEASONS.length - 1 - SEASONS.indexOf(season)));
@@ -874,7 +940,8 @@ const sz = {
   roster: null,                // [{ userId, firstname, lastname, team, current }]
   agg:    {},                  // userId → [{ n, km[13], h[13] }] oldest → newest
   metric: 'km', view: 'charts', scale: 'own', sort: 'vol', who: 'all',
-  sel:    null
+  sel:    null,
+  solo:   false                // one athlete only (athlete detail), not the team grid
 };
 
 /* Short outages are frequent: time out quickly and retry network/5xx errors */
@@ -936,15 +1003,16 @@ function szAggregate(entries) {
   });
 }
 
-async function szLoadAll(onProgress) {
-  const roster = await szLoadRoster();
+async function szLoadAll(onProgress, only) {
+  const all    = await szLoadRoster();
+  const roster = only == null ? all : all.filter(a => a.userId === only);
   const queue  = roster.filter(a => !sz.agg[a.userId]);
   let done = roster.length - queue.length, failed = 0;
   const worker = async () => {
     while (queue.length) {
       const a = queue.shift();
       try {
-        const raw = await apiFetchRetry(`/team/detail/${a.team}/athlete/${a.userId}/training-log`);
+        const raw = await getLog(a.userId, a.team);
         sz.agg[a.userId] = szAggregate(Object.values(raw.results?.data || {}));
       } catch (_) { failed++; }
       onProgress(++done, roster.length);
@@ -1109,13 +1177,14 @@ function szChart(ath, metric, o) {
 /* ── page ── */
 function szRows() {
   let rows = sz.roster.filter(a => sz.agg[a.userId]).map(a => ({ ...a, seasons: sz.agg[a.userId].slice(szWindow().off, szWindow().end + 1) }));
+  if (sz.solo) return rows.filter(a => a.userId === sz.sel);
   if (sz.who === 'current') rows = rows.filter(a => a.current);
   if (sz.who === 'former')  rows = rows.filter(a => !a.current);
   const name = a => `${a.lastname} ${a.firstname}`;
   if (sz.sort === 'name')  rows.sort((a, b) => name(a).localeCompare(name(b), 'cs'));
   if (sz.sort === 'delta') rows.sort((a, b) => (szDelta(b) ?? -9) - (szDelta(a) ?? -9));
   if (sz.sort === 'vol') {
-    const si = szWindow().n - 1;           // the season picked in the header dropdown
+    const si = szWindow().n - 1;           // the season picked in the season dropdown (bar above the content)
     rows.sort((a, b) => (szTotal(b, si) || 0) - (szTotal(a, si) || 0));
   }
   return rows;
@@ -1147,6 +1216,7 @@ function szSelect(label, options, key, onChange) {
 }
 
 async function renderSeasons() {
+  const my = nav.seq;
   sz.active = true;
   szHideTip();
   const main = document.getElementById('main');
@@ -1157,9 +1227,9 @@ async function renderSeasons() {
 
   let failed = 0;
   try {
-    failed = await szLoadAll((done, total) => { msg.textContent = `Načítám tréninkové deníky… ${done}/${total}`; });
+    failed = await szLoadAll((done, total) => { msg.textContent = `Načítám tréninkové deníky… ${done}/${total}`; }, sz.solo ? sz.sel : null);
   } catch (e) {
-    if (!sz.active) return;
+    if (!sz.active || my !== nav.seq) return;
     const err = szNode('div', 'state-box');
     const retry = szNode('button', 'ghost', 'Zkusit znovu');
     retry.addEventListener('click', renderSeasons);
@@ -1167,7 +1237,7 @@ async function renderSeasons() {
     main.replaceChildren(err);
     return;
   }
-  if (!sz.active) return;
+  if (!sz.active || my !== nav.seq) return;
 
   const root = szNode('div', 'sz-wrap');
   const bar  = szNode('div', 'sz-bar');
@@ -1186,7 +1256,8 @@ async function renderSeasons() {
 
   const nCur = sz.roster.filter(a => a.current).length;
   const draw = () => { drawDetail(); drawList(); };
-  bar.append(
+  if (sz.solo) bar.append(szSeg([['km', 'Běh km'], ['h', 'Zátěž']], 'metric', draw), legend);
+  else bar.append(
     szSeg([['km', 'Běh km'], ['h', 'Zátěž']], 'metric', draw),
     szSeg([['charts', 'Grafy'], ['table', 'Tabulka']], 'view', drawList),
     szSelect('Škála', [['own', 'vlastní u každého'], ['shared', 'společná']], 'scale', drawList),
@@ -1226,6 +1297,7 @@ async function renderSeasons() {
 
   function drawList() {
     list.replaceChildren();
+    if (sz.solo) return;
     const rows = szRows();
     const M    = SZ_METRIC[sz.metric];
     title.textContent = `${rows.length} sportovců · ${M.label} po cyklech · klikněte na sportovce pro detail`;
@@ -1289,9 +1361,9 @@ async function renderSeasons() {
   }
   const units = szNode('p', 'sz-note', UNITS_NOTE);
   units.style.margin = '0 0 14px';
-  root.append(units, detail, title, list,
+  root.append(units, detail, ...(sz.solo ? [] : [title, list]),
     szNode('p', 'sz-note', 'Sezóna = 52 týdnů od pondělí, cykly po 4 týdnech od ' + fmtDateObj(new Date(SZ_ANCHOR_TS)) +
-      ' (a o násobky 52 týdnů zpět). Zobrazuje se sezóna vybraná v hlavičce a až 3 před ní. Změna porovnává jen cykly, které už nejnovější zobrazená sezóna dokončila, se stejnými cykly předchozí sezóny. Nemocné dny se z deníku zrekonstruovat nedají.'));
+      ' (a o násobky 52 týdnů zpět). Zobrazuje se sezóna vybraná v liště nad obsahem a až 3 před ní. Změna porovnává jen cykly, které už nejnovější zobrazená sezóna dokončila, se stejnými cykly předchozí sezóny. Nemocné dny se z deníku zrekonstruovat nedají.'));
   main.replaceChildren(root);
   drawDetail(); drawList();
 }
@@ -1324,7 +1396,7 @@ async function pvLoadWeeks(a, season) {
   const key = season.year + ':' + a.userId;
   if (pv.cache[key]) return pv.cache[key];
   const t0 = pvStartTs(season);
-  const raw   = await apiFetchRetry(`/team/detail/${a.team}/athlete/${a.userId}/training-log`);
+  const raw   = await getLog(a.userId, a.team);
   const weeks = Array.from({ length: CYCLES_PER_YEAR * WEEKS_PER_CYCLE }, () => ({ km: 0, n: 0 }));
   const runs  = [];                       // running activities (for the heart-rate zone split)
   for (const e of Object.values(raw.results?.data || {})) {
@@ -1747,6 +1819,7 @@ function pvChart(S, data, zoned) {
 }
 
 async function renderPlan() {
+  const my = nav.seq;
   sz.active = true;                        // same guard against late async renders
   const main = document.getElementById('main');
   const box  = szNode('div', 'state-box');
@@ -1768,26 +1841,16 @@ async function renderPlan() {
     main.replaceChildren(err);
     return;
   }
-  if (!sz.active) return;
+  if (!sz.active || my !== nav.seq) return;
 
-  /* the plan of the training year picked in the header dropdown (matched by its Monday start) */
+  /* the plan of the training year picked in the season dropdown (bar above the content) (matched by its Monday start) */
   const planSeason = () => plan.seasons.find(s => s.start === season.start);
 
-  const athletes = roster.slice().sort((x, y) => x.lastname.localeCompare(y.lastname, 'cs'));
-  if (!athletes.some(a => a.userId === pv.uid)) pv.uid = athletes.length ? athletes[0].userId : null;
+  const athletes = roster;               // the athlete is picked in the left panel (pv.uid)
 
   const root = szNode('div', 'sz-wrap');
   const bar  = szNode('div', 'sz-bar');
   const out  = szNode('div');
-
-  const who = szNode('label', 'sz-fl', 'Sportovec');
-  const whoSel = szNode('select');
-  athletes.forEach(a => {
-    const o = szNode('option', null, `${a.lastname} ${a.firstname}${a.current ? '' : ' (bývalý)'}`);
-    o.value = a.userId; whoSel.appendChild(o);
-  });
-  whoSel.value = pv.uid;
-  who.appendChild(whoSel);
 
   const lv = szNode('label', 'sz-fl', 'Úroveň v plánu');
   const lvSel = szNode('select');
@@ -1802,14 +1865,13 @@ async function renderPlan() {
     P.levels.forEach(l => { const o = szNode('option', null, l); o.value = l; lvSel.appendChild(o); });
     lvSel.value = pv.level[lvKey()] || P.levels[0];
   };
-  whoSel.addEventListener('change', () => { pv.uid = +whoSel.value; syncLevel(); draw(); });
   lvSel.addEventListener('change', async () => {
     pv.level[lvKey()] = lvSel.value;
     await chrome.storage.local.set({ planLevels: pv.level });
     draw();
   });
   syncLevel();
-  bar.append(who, lv);
+  bar.append(lv);
 
   async function draw() {
     const a = athletes.find(x => x.userId === pv.uid);
@@ -1821,7 +1883,7 @@ async function renderPlan() {
     const t0 = pvStartTs(S);
     try { weeks = await pvLoadWeeks(a, S); }
     catch (e) { if (pv.uid === a.userId) out.replaceChildren(szNode('div', 'sz-warn', 'Deník se nepodařilo načíst: ' + e.message)); return; }
-    if (pv.uid !== a.userId || planSeason() !== S || !sz.active) return;
+    if (pv.uid !== a.userId || planSeason() !== S || !sz.active || my !== nav.seq) return;
 
     const level = pv.level[lvKey()] || S.levels[0];
     const now   = Date.now();
@@ -1881,7 +1943,7 @@ async function renderPlan() {
     chartBox.appendChild(pvChart(S, data));
     const zoneBox = szNode('div', 'pv-zbox');
     out.replaceChildren(chartBox, zoneBox, sum, wrap, footer);
-    pvZonePanel(zoneBox, chartBox, a, S, data, () => pv.uid === a.userId && planSeason() === S && sz.active);
+    pvZonePanel(zoneBox, chartBox, a, S, data, () => pv.uid === a.userId && planSeason() === S && sz.active && my === nav.seq);
   }
 
   root.append(bar, out);
@@ -1929,41 +1991,14 @@ document.getElementById('btn-extract').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('nav-totals').addEventListener('click', e => {
+/* Tým opens the team view; the athlete list below it is always visible */
+document.getElementById('nav-team').addEventListener('click', e => {
   e.preventDefault();
   if (!state.token) return;
-  state.selected = null;
-  sz.active = false;
-  szHideTip();
-  document.querySelectorAll('.ath-item').forEach(el => el.classList.remove('active'));
-  document.getElementById('nav-seasons').classList.remove('active');
-  document.getElementById('nav-plan').classList.remove('active');
-  document.getElementById('nav-totals').classList.add('active');
-  renderTotals();
+  if (nav.mode === 'athlete') setMode('team');
 });
 
-document.getElementById('nav-seasons').addEventListener('click', e => {
-  e.preventDefault();
-  if (!state.token) return;
-  state.selected = null;
-  document.querySelectorAll('.ath-item').forEach(el => el.classList.remove('active'));
-  document.getElementById('nav-totals').classList.remove('active');
-  document.getElementById('nav-plan').classList.remove('active');
-  document.getElementById('nav-seasons').classList.add('active');
-  renderSeasons();
-});
-
-document.getElementById('nav-plan').addEventListener('click', e => {
-  e.preventDefault();
-  if (!state.token) return;
-  state.selected = null;
-  szHideTip();
-  document.querySelectorAll('.ath-item').forEach(el => el.classList.remove('active'));
-  document.getElementById('nav-totals').classList.remove('active');
-  document.getElementById('nav-seasons').classList.remove('active');
-  document.getElementById('nav-plan').classList.add('active');
-  renderPlan();
-});
+document.getElementById('btn-refresh').addEventListener('click', () => { if (state.token) refreshData(); });
 
 document.getElementById('btn-reset').addEventListener('click', async () => {
   await chrome.storage.local.remove('token');
@@ -1971,9 +2006,8 @@ document.getElementById('btn-reset').addEventListener('click', async () => {
   Object.assign(sz, { active: false, roster: null, agg: {}, sel: null });
   Object.assign(pv, { uid: null, cache: {} });
   useSeason(SEASONS.filter(s => s.start <= new Date().toISOString().slice(0, 10)).pop() || SEASONS[0]);
-  document.getElementById('nav-seasons').classList.remove('active');
-  document.getElementById('nav-totals').classList.remove('active');
-  document.getElementById('nav-plan').classList.remove('active');
+  for (const k of Object.keys(logCache)) delete logCache[k];
+  Object.assign(nav, { mode: 'team', tab: 'seasons', uid: null, last: { team: 'seasons', athlete: 'cycles' } });
   document.getElementById('app').style.display   = 'none';
   document.getElementById('setup').style.display = 'flex';
   document.getElementById('tok-input').value     = '';

@@ -31,7 +31,7 @@ Endpoints used:
   GET /team/detail/{team}/athlete/:uid/training-log        → same log, fetched via the team the athlete belongs to
 ```
 
-Training years are listed in `SEASONS` (`popup.js`: `label`, `team`, `start`, `end`). A header dropdown picks the year shown on the athlete, totals and calendar pages (`useSeason` sets `TEAM_ID`, `SEASON_START/END`, …); the default is the year containing today. Activities outside the selected range are filtered out. Sezóny follows the dropdown too (it shows that year and up to 3 before it, never later ones); Plán uses the dropdown too (plan season matched by `start`; a year without a `plan.json` entry shows a note).
+Training years are listed in `SEASONS` (`popup.js`: `label`, `team`, `start`, `end`). The dropdown in the bar above the content (right panel) picks the year shown on the athlete, totals and calendar pages (`useSeason` sets `TEAM_ID`, `SEASON_START/END`, …); the default is the year containing today. Activities outside the selected range are filtered out. Sezóny follows the dropdown too (it shows that year and up to 3 before it, never later ones); Plán uses the dropdown too (plan season matched by `start`; a year without a `plan.json` entry shows a note).
 **New season checklist:** append an entry to `SEASONS` (Monday start, end = the Sunday 363 days later). If Tréninkáč just moves the existing team's from–to range (as happened for team 117 in 2026), set `stats: false` on the previous year's entry — the team's statistics then only describe the newest year (they are keyed by ISO week, so they would be mixed up), and that year is computed from the log and calendar alone. A year with its own team just sets `team`. Add a `plan.json` season when the plan arrives.
 
 ### Seasons are separate teams
@@ -189,7 +189,7 @@ CSS uses CSS variables (`--accent`, `--text`, `--text-muted`, `--surface`, `--bo
 state = {
   token,
   athletes,          // sorted by lastname
-  selected,          // userId of active athlete (null on totals page)
+  selected,          // userId of active athlete (null in the Tým view)
   cache,             // userId → { cycleData, nezp, activsByWeek }
   expCyc,            // userId → Set<cycleNum>  (expanded cycles)
   expWk,             // userId → Set<"cycleNum-weekNum">  (expanded weeks)
@@ -203,6 +203,13 @@ sz = {               // Sezóny page
 }
 ```
 
+## Layout and navigation
+
+Header: title + "Změnit token". Left panel: **Tým** (shows the athlete count; click = team view) above the always visible athlete list. Right panel: a bar with the season dropdown, the tabs of the current mode, the athlete's name and "Obnovit data", then the page. `nav = { mode: 'team'|'athlete', tab, uid, seq }`; `setMode`/`setTab` → `render()` is the only way pages are opened; `nav.seq` increments per render so late async renders of a page already left are dropped.
+- Tým tabs: **Sezóny** (default, needs only logs) and **Celkové součty** (also statistics + calendar of every athlete).
+- Athlete tabs: **Cykly** (table/calendar), **Sezóny** (`sz.solo`: only that athlete's detail charts), **Plán vs. realita** (athlete from the left panel, `pv.uid = nav.uid`; level + HR zones).
+- `getLog(uid)` caches the training log per athlete for the session (the log is the whole history), so every page and tab reuses it. Opening the app costs about 2 + one log per athlete (current and former); switching tabs or athletes costs nothing. "Obnovit data" clears the cache.
+
 ## Features summary
 
 - Cycle/week drill-down with expandable activity rows
@@ -213,9 +220,9 @@ sz = {               // Sezóny page
 - Red highlighting on cycle/week names when nezp activities present
 - Date range (DD.MM.YYYY – DD.MM.YYYY) shown next to cycle and week names
 - ⎘ copy button on cycle rows — copies DZ/FA/ZA/NE/Zátěž/Běh km as TSV for Google Sheets
-- **Celkové součty** page: all athletes loaded in parallel, sortable summary table
-- **Sezóny** page: progress of every athlete (current and former members of teams 117/108/8) across the last 4 training years, per cycle, as small-multiple line charts (Běh km / Zátěž) or a table; default sort by volume of the newest shown year
-- **Plán vs. realita** page: per athlete and the training year picked in the header dropdown, planned vs. actual running km per cycle — chart (bars = actual, line = plan, red dot = weeks without any activity), summary and a table with weekly chips. The plan level is picked per athlete and year and remembered in `chrome.storage.local` (`planLevels`)
+- **Celkové součty** (Tým tab): all athletes loaded in parallel, sortable summary table
+- **Sezóny** (Tým tab; per athlete in the athlete tabs): progress of every athlete (current and former members of teams 117/108/8) across the last 4 training years, per cycle, as small-multiple line charts (Běh km / Zátěž) or a table; default sort by volume of the newest shown year
+- **Plán vs. realita** page: for the athlete selected on the left and the training year picked in the dropdown, planned vs. actual running km per cycle — chart (bars = actual, line = plan, red dot = weeks without any activity), summary and a table with weekly chips. The plan level is picked per athlete and year and remembered in `chrome.storage.local` (`planLevels`)
 - **Tepové zóny na Plán vs. realita** (button "Tepové zóny…" under the chart; nothing is fetched until "Načíst a zobrazit zóny" is pressed): the thresholds are chosen per athlete in the panel and stored only in `chrome.storage.local` under `hrZones` (never in the repo, they are health data of minors) — a) lactate tests (date, AP, ANP in bpm; a test is valid only in the training year its date falls into, an activity uses the latest one dated before it, before the first one the first), or b) an estimate from the highest measured heart rate entered by hand (AP 80 %, ANP 90 % of it; only rough; the button "Zjistit z posledních 4 týdnů" prefills it with the highest bpm held ≥ 5 s in the runs of the last 4 weeks of the shown year). Bars are stacked into aerobic (< AP), mixed (AP–ANP) and anaerobic (> ANP) km, plus a donut of the year; runs without heart rate are grey and left out of the shares. Each run's stream is reduced to a metres-per-bpm histogram cached for the session (`pv.zones`), so changing thresholds does not refetch; streams are fetched 2 in parallel via `pvFetchStream`, which waits and retries on HTTP 429 (limit 1000 requests per window). Caveat: heart rate lags, so reps shorter than about a minute do not show in the zones
 - **Kalendář** toggle in the athlete view (next to Tabulka): 13 small calendars, one per cycle, days shaded by run km; pips top-right per activity when a day has several or an unprocessed one (red), click a day for links to its activities
 

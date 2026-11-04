@@ -167,18 +167,29 @@ header {
 
 .h-team { font-size: 12px; color: var(--text-sec); }
 
-header .flex1 { flex: 1; }
+.flex1 { flex: 1; }
 
-.h-nav-link {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-sec);
-  text-decoration: none;
-  padding: 3px 8px;
-  border-radius: 5px;
-  transition: background 0.15s, color 0.15s;
+.aside-nav { padding: 8px 8px 4px; display: flex; flex-direction: column; gap: 2px; }
+.aside-link {
+  font-size: 12.5px; font-weight: 600; color: var(--text-sec); text-decoration: none;
+  padding: 7px 10px; border-radius: 6px; display: flex; justify-content: space-between;
 }
-.h-nav-link:hover, .h-nav-link.active { background: var(--hover); color: var(--text); }
+.aside-link:hover { background: var(--elevated); color: var(--text); }
+.aside-link.active { background: var(--accent-dim); color: var(--accent); }
+.aside-n { font-weight: 400; color: var(--text-muted); }
+#pane { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.subbar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 8px 24px; border-bottom: 1px solid var(--border-sub); flex-shrink: 0;
+}
+.tabs { display: flex; gap: 2px; }
+.tab {
+  font-size: 12.5px; font-weight: 600; color: var(--text-sec); text-decoration: none;
+  padding: 5px 11px; border-radius: 6px;
+}
+.tab:hover { background: var(--hover); color: var(--text); }
+.tab.active { background: var(--accent-dim); color: var(--accent); }
+.sub-name { font-size: 13px; font-weight: 700; color: var(--text); }
 
 .h-season {
   background: var(--surface);
@@ -752,22 +763,28 @@ td.num { text-align: right; }
     <span class="h-logo">Tr&#233;nink&#225;&#269;</span>
     <div class="h-sep"></div>
     <span class="h-team">Dorost LPU</span>
-    <select class="h-season" id="season-sel" title="Tr&#233;ninkov&#253; rok (rozhoduje o str&#225;nk&#225;ch Sportovec a Celkov&#233; sou&#269;ty)"></select>
-    <div class="h-sep"></div>
-    <a class="h-nav-link" id="nav-totals" href="#">Celkov&#233; sou&#269;ty</a>
-    <a class="h-nav-link" id="nav-seasons" href="#">Sez&#243;ny</a>
-    <a class="h-nav-link" id="nav-plan" href="#">Pl&#225;n vs. realita</a>
     <div class="flex1"></div>
     <button class="h-btn" id="btn-reset">&#8635; Zm&#283;nit token</button>
   </header>
   <div class="body">
     <aside>
-      <div class="aside-label">Sportovci</div>
+      <div class="aside-nav">
+        <a class="aside-link" id="nav-team" href="#">T&#253;m <span class="aside-n"><span id="ath-count"></span></span></a>
+      </div>
       <div class="athlete-list" id="ath-list"></div>
     </aside>
-    <main id="main">
-      <div class="state-box">&#8592; Vyberte sportovce</div>
-    </main>
+    <div id="pane">
+      <div class="subbar" id="subbar">
+        <select class="h-season" id="season-sel" title="Tr&#233;ninkov&#253; rok"></select>
+        <div class="tabs" id="tabs"></div>
+        <span class="sub-name" id="sub-name"></span>
+        <div class="flex1"></div>
+        <button class="h-btn" id="btn-refresh" title="Smazat data na&#269;ten&#225; v t&#233;to relaci a st&#225;hnout znovu">&#8635; Obnovit data</button>
+      </div>
+      <main id="main">
+        <div class="state-box">&#8592; Vyberte sportovce</div>
+      </main>
+    </div>
   </div>
 </div>
 
