@@ -1446,19 +1446,25 @@ function pvTestFor(tests, date) {
   return t;
 }
 
-/* Thresholds of an athlete's config for a training year: { at(date) → {aet, ant}, label } or { err } */
+/* Thresholds of an athlete's config for a training year:
+   { n, cuts(date) → ascending bpm cut points (n − 1 of them), label } or { err }.
+   n = 3 zones: cuts [AP, ANP]. n = 5 zones (lactate tests that all carry the 3 mmol/l value):
+   cuts [AP − step, AP, 3 mmol/l, ANP] where step = (3 mmol/l bpm) − AP bpm, i.e. the band under AP
+   is as wide as the one above it (the lab gives no usable point below AP: lactate is flat there). */
 function pvThresholds(cfg, yr) {
   if (cfg.mode === 'max') {
     const max = Math.round(+cfg.maxHr);
     if (!(max >= 120 && max <= 230)) return { err: 'Zadejte nejvyšší naměřenou TF (120–230 tepů za minutu).' };
-    const t = { aet: Math.round(max * PV_MAX_AP), ant: Math.round(max * PV_MAX_ANP) };
-    return { at: () => t, label: `odhad z max TF ${max}: AP ${t.aet}, ANP ${t.ant}` };
+    const c = [Math.round(max * PV_MAX_AP), Math.round(max * PV_MAX_ANP)];
+    return { n: 3, cuts: () => c, label: `odhad z max TF ${max}: AP ${c[0]}, ANP ${c[1]}` };
   }
   const tests = (cfg.tests || []).filter(t => t.date >= yr.start && t.date <= yr.end && t.aet > 0 && t.ant > t.aet)
                                  .sort((x, y) => x.date.localeCompare(y.date));
   if (!tests.length) return { err: `Pro sezónu ${yr.label} není zadané žádné laktátové měření (měření platí jen v sezóně, do které spadá jeho datum).` };
-  return { at: d => pvTestFor(tests, d),
-           label: 'laktátová měření – ' + tests.map(t => `${fmtDate2(t.date)}: AP ${t.aet}, ANP ${t.ant}`).join(' · ') };
+  const five = tests.every(t => t.mix > t.aet && t.mix < t.ant);
+  const cutsOf = t => five ? [t.aet - (t.mix - t.aet), t.aet, t.mix, t.ant] : [t.aet, t.ant];
+  return { n: five ? 5 : 3, cuts: d => cutsOf(pvTestFor(tests, d)),
+           label: 'laktátová měření – ' + tests.map(t => `${fmtDate2(t.date)}: AP ${t.aet}` + (five ? `, 3 mmol/l ${t.mix}` : '') + `, ANP ${t.ant}`).join(' · ') };
 }
 
 /* Metres and seconds per bpm of one stream, plus metres without a heart rate */
@@ -1516,14 +1522,17 @@ function pvMaxHr(runs, minSec = 5) {
   return 0;
 }
 
-/* km per zone for one run: [aerobic, mixed, anaerobic, no heart rate] */
-function pvRunZones(run, hist, th) {
+/* km per zone for one run: [zone 1 … zone n, no heart rate] */
+function pvRunZones(run, hist, cuts) {
+  const n  = cuts.length + 1;
   const km = run.m / 1000;
-  if (!hist || !(hist.tot > 0)) return [0, 0, 0, km];
-  const z = [0, 0, 0];
-  for (const b in hist.h) z[+b < th.aet ? 0 : +b < th.ant ? 1 : 2] += hist.h[b];
+  const out = Array(n + 1).fill(0);
+  if (!hist || !(hist.tot > 0)) { out[n] = km; return out; }
+  for (const b in hist.h) out[cuts.filter(c => +b >= c).length] += hist.h[b];
   const k = km / hist.tot;
-  return [z[0] * k, z[1] * k, z[2] * k, hist.noHr * k];
+  for (let z = 0; z < n; z++) out[z] *= k;
+  out[n] = hist.noHr * k;
+  return out;
 }
 
 /* Fetch the histograms of all runs not in the session cache yet, 2 requests in parallel
@@ -1566,18 +1575,30 @@ async function pvLoadHists(runs, onProgress, probe = false) {
 }
 const PV_PROBE = 10;
 
-const PV_ZONES = [
-  { name: 'Aerobní',   hint: 'pod AP',    cls: 'var(--z1)' },
-  { name: 'Smíšená',   hint: 'AP – ANP',  cls: 'var(--z2)' },
-  { name: 'Anaerobní', hint: 'nad ANP',   cls: 'var(--z3)' },
-  { name: 'Bez tepu',  hint: '',          cls: 'var(--z0)' }
-];
+/* Zone definitions for n = 3 or 5 zones; the last entry is the grey "no heart rate" bucket */
+const PV_ZONE_DEFS = {
+  3: [
+    { name: 'Aerobní',   hint: 'pod AP',      cls: 'var(--z1)' },
+    { name: 'Smíšená',   hint: 'AP – ANP',    cls: 'var(--z2)' },
+    { name: 'Anaerobní', hint: 'nad ANP',     cls: 'var(--z3)' },
+    { name: 'Bez tepu',  hint: '',            cls: 'var(--z0)' }
+  ],
+  5: [
+    { name: 'Volné',     hint: 'hluboko pod AP', cls: 'var(--y1)' },
+    { name: 'Pod AP',    hint: 'těsně pod AP',   cls: 'var(--y2)' },
+    { name: 'Smíšená',   hint: 'AP – 3 mmol/l',  cls: 'var(--y3)' },
+    { name: 'Pod ANP',   hint: '3 mmol/l – ANP', cls: 'var(--y4)' },
+    { name: 'Anaerobní', hint: 'nad ANP',        cls: 'var(--y5)' },
+    { name: 'Bez tepu',  hint: '',               cls: 'var(--z0)' }
+  ]
+};
 
 /* Share of the year's running km per zone as a donut; only km with a heart rate count */
 function pvDonut(data) {
-  const sum = [0, 0, 0, 0];
+  const defs = data.zd, n = defs.length - 1;
+  const sum = Array(n + 1).fill(0);
   data.forEach(d => { if (d.started && d.zk) d.zk.forEach((v, i) => { sum[i] += v; }); });
-  const hrKm = sum[0] + sum[1] + sum[2], all = hrKm + sum[3];
+  const hrKm = sum.slice(0, n).reduce((t, v) => t + v, 0), all = hrKm + sum[n];
   const wrap = szNode('div', 'sz-card pv-donut');
   if (!(hrKm > 0)) return wrap;
   const R = 70, r = 44, C = 80;
@@ -1585,11 +1606,11 @@ function pvDonut(data) {
                              'aria-label': 'Podíl km v tepových zónách za sezónu' });
   let a0 = -Math.PI / 2;
   const P = (rad, a) => `${C + rad * Math.cos(a)},${C + rad * Math.sin(a)}`;
-  sum.slice(0, 3).forEach((v, i) => {
+  sum.slice(0, n).forEach((v, i) => {
     if (!(v > 0)) return;
     const frac = v / hrKm, a1 = a0 + Math.min(frac, 0.99999) * 2 * Math.PI, big = frac > 0.5 ? 1 : 0;
     szSvg('path', { d: `M${P(R, a0)} A${R},${R} 0 ${big} 1 ${P(R, a1)} L${P(r, a1)} A${r},${r} 0 ${big} 0 ${P(r, a0)} Z`,
-                    fill: PV_ZONES[i].cls, stroke: 'var(--surface)', 'stroke-width': 1.5 }, svg);
+                    fill: defs[i].cls, stroke: 'var(--surface)', 'stroke-width': 1.5 }, svg);
     a0 = a1;
   });
   const t1 = szSvg('text', { x: C, y: C - 2, 'text-anchor': 'middle', 'font-size': 18, 'font-weight': 600, fill: 'var(--text)' }, svg);
@@ -1598,15 +1619,15 @@ function pvDonut(data) {
   t2.textContent = 's tepem';
   const list = szNode('div', 'pv-donut-list');
   list.appendChild(szNode('div', 'h', 'Podíl km v tepových zónách (sezóna)'));
-  sum.slice(0, 3).forEach((v, i) => {
+  sum.slice(0, n).forEach((v, i) => {
     const row = szNode('div', 'r');
-    const sw = szNode('i', 'pv-sw-bar'); sw.style.background = PV_ZONES[i].cls;
+    const sw = szNode('i', 'pv-sw-bar'); sw.style.background = defs[i].cls;
     row.append(sw, szNode('b', null, Math.round(v / hrKm * 100) + ' %'),
-               szNode('span', null, `${PV_ZONES[i].name} (${PV_ZONES[i].hint}) · ${v.toFixed(0)} km`));
+               szNode('span', null, `${defs[i].name} (${defs[i].hint}) · ${v.toFixed(0)} km`));
     list.appendChild(row);
   });
-  if (sum[3] > 0.5) list.appendChild(szNode('div', 'pv-donut-note',
-    `Bez tepové informace: ${sum[3].toFixed(0)} km (${Math.round(sum[3] / all * 100)} % běhu), do podílů se nepočítá.`));
+  if (sum[n] > 0.5) list.appendChild(szNode('div', 'pv-donut-note',
+    `Bez tepové informace: ${sum[n].toFixed(0)} km (${Math.round(sum[n] / all * 100)} % běhu), do podílů se nepočítá.`));
   wrap.append(svg, list);
   return wrap;
 }
@@ -1646,21 +1667,23 @@ function pvZonePanel(box, chartBox, a, S, data, alive) {
   const list = szNode('div', 'pv-tests');
   const num  = (ph, w) => { const i = szNode('input'); i.type = 'number'; i.placeholder = ph; i.style.width = w; i.min = 60; i.max = 230; return i; };
   const fDate = szNode('input'); fDate.type = 'date';
-  const fAet = num('AP', '70px'), fAnt = num('ANP', '70px');
+  const fAet = num('AP', '70px'), fMix = num('3 mmol/l', '80px'), fAnt = num('ANP', '70px');
   const add = szNode('button', null, 'Přidat měření');
   const msg = szNode('span', 'sz-warn');
   add.addEventListener('click', () => {
     const t = { date: fDate.value, aet: +fAet.value, ant: +fAnt.value };
+    if (fMix.value) t.mix = +fMix.value;
     msg.textContent = '';
     if (!t.date) { msg.textContent = 'Zadejte datum měření.'; return; }
     if (!(t.aet > 0 && t.ant > t.aet)) { msg.textContent = 'ANP musí být větší než AP (tepy za minutu).'; return; }
+    if (t.mix != null && !(t.mix > t.aet && t.mix < t.ant)) { msg.textContent = 'Tep při 3 mmol/l musí ležet mezi AP a ANP.'; return; }
     cfg.tests = (cfg.tests || []).filter(x => x.date !== t.date).concat(t).sort((x, y) => x.date.localeCompare(y.date));
-    fDate.value = fAet.value = fAnt.value = '';
+    fDate.value = fAet.value = fMix.value = fAnt.value = '';
     save(); drawTests();
   });
   const form = szNode('div', 'pv-form');
-  form.append(fDate, fAet, fAnt, add, msg);
-  lab.append(szNode('div', 'sz-note', 'Měření platí jen v tréninkovém roce, do kterého spadá jeho datum. Tepy za minutu na aerobním (2 mmol/l) a anaerobním prahu (4 mmol/l).'), list, form);
+  form.append(fDate, fAet, fMix, fAnt, add, msg);
+  lab.append(szNode('div', 'sz-note', 'Měření platí jen v tréninkovém roce, do kterého spadá jeho datum. Tepy za minutu na aerobním (2 mmol/l) a anaerobním prahu (4 mmol/l). Vyplníte-li u všech měření v sezóně i tep při 3 mmol/l (řádek „Smíšená zóna“ v protokolu), zobrazí se pět zón, jinak tři.'), list, form);
   function drawTests() {
     list.replaceChildren();
     (cfg.tests || []).forEach((t, i) => {
@@ -1668,7 +1691,7 @@ function pvZonePanel(box, chartBox, a, S, data, alive) {
       const row = szNode('div', 'pv-test' + (inYear ? '' : ' off'));
       const del = szNode('button', 'ghost', '✕'); del.title = 'Smazat měření';
       del.addEventListener('click', () => { cfg.tests.splice(i, 1); save(); drawTests(); });
-      row.append(szNode('span', null, fmtDate2(t.date)), szNode('span', null, `AP ${t.aet}`), szNode('span', null, `ANP ${t.ant}`),
+      row.append(szNode('span', null, fmtDate2(t.date)), szNode('span', null, `AP ${t.aet}`), szNode('span', null, t.mix ? `3 mmol ${t.mix}` : '3 mmol —'), szNode('span', null, `ANP ${t.ant}`),
                  szNode('span', 'dim', inYear ? `platí pro ${season.label}` : 'jiná sezóna'), del);
       list.appendChild(row);
     });
@@ -1737,16 +1760,20 @@ function pvZonePanel(box, chartBox, a, S, data, alive) {
     const noSensor = failed === -1;
     if (noSensor) failed = 0;
     probeNext = !noSensor;
-    data.forEach(d => { d.zk = [0, 0, 0, 0]; });
+    const defs = PV_ZONE_DEFS[th.n];
+    data.zd = defs;
+    data.forEach(d => { d.zk = Array(defs.length).fill(0); });
     runs.forEach(r => {
-      const z = pvRunZones(r, pv.zones[r.id], th.at(r.date)), ci = Math.floor(r.wi / WEEKS_PER_CYCLE);
+      const z = pvRunZones(r, pv.zones[r.id], th.cuts(r.date)), ci = Math.floor(r.wi / WEEKS_PER_CYCLE);
       if (data[ci]) z.forEach((v, k) => { data[ci].zk[k] += v; });
     });
-    const hrKm = data.reduce((t, d) => t + d.zk[0] + d.zk[1] + d.zk[2], 0);
+    const hrKm = data.reduce((t, d) => t + d.zk.slice(0, th.n).reduce((a, v) => a + v, 0), 0);
     if (!(hrKm > 0)) { status.className = 'sz-warn'; status.textContent = noSensor ? `V ukázce ${PV_PROBE} běhů z celého roku není žádný s tepem, ostatní se nestahovaly. Zóny nelze zobrazit. Kdyby měl tep jen u několika běhů, stiskněte tlačítko znovu: projdou se všechny (${runs.filter(r => r.hasStream).length} požadavků).` : 'Aktivity sportovce neobsahují tepová data, zóny nelze zobrazit.'; return; }
     status.textContent = '';
     const nn = [
-      szNode('p', 'sz-note', `Zóny (tep/min): ${th.label}. Aerobní = pod AP, smíšená = AP až ANP, anaerobní = nad ANP.`),
+      szNode('p', 'sz-note', `Zóny (tep/min): ${th.label}. ` + (th.n === 5
+        ? 'Hranice: AP, 3 mmol/l a ANP z měření; spodní hranice zóny „pod AP“ je AP minus rozdíl mezi 3 mmol/l a AP.'
+        : 'Aerobní = pod AP, smíšená = AP až ANP, anaerobní = nad ANP.')),
       szNode('p', 'sz-note', 'Pozor: tep reaguje se zpožděním, takže krátké úseky (zhruba pod 1 minutu) v zónách nevyniknou a čas rychlého úseku se zčásti započítá do nižší zóny. ' +
         'Podíly dobře ukazují strukturu objemu, ne splnění jednotlivého intervalového tréninku.')
     ];
@@ -1775,7 +1802,7 @@ function pvChart(S, data, zoned) {
   const wrap = szNode('div', 'sz-card pv-chart');
   const legend = szNode('div', 'sz-legend pv-legend');
   if (zoned) {
-    PV_ZONES.forEach(z => {
+    data.zd.forEach(z => {
       const sw = szNode('span'), i = szNode('i', 'pv-sw-bar'); i.style.background = z.cls;
       sw.append(i, document.createTextNode(z.hint ? `${z.name} (${z.hint})` : z.name));
       legend.appendChild(sw);
@@ -1805,7 +1832,7 @@ function pvChart(S, data, zoned) {
       d.zk.forEach((v, k) => {
         if (!(v > 0)) return;
         szSvg('rect', { x: X(i) - bw / 2, width: bw, y: Y(acc + v), height: Math.max(0, Y(acc) - Y(acc + v)),
-                        fill: PV_ZONES[k].cls, opacity: d.finished ? 1 : 0.45 }, svg);
+                        fill: data.zd[k].cls, opacity: d.finished ? 1 : 0.45 }, svg);
         acc += v;
       });
     } else if (d.started && d.real > 0) {
@@ -1833,7 +1860,7 @@ function pvChart(S, data, zoned) {
     row('plán', d.pl + ' km');
     row('skutečnost', d.started ? d.real.toFixed(1) + ' km' + (d.finished ? ` (${Math.round(d.real / d.pl * 100)} %)` : ' (probíhá)') : '—');
     if (zoned && d.zk && d.started) d.zk.forEach((v, k) => {
-      if (v > 0.05) row(PV_ZONES[k].name.toLowerCase(), `${v.toFixed(1)} km (${Math.round(v / d.real * 100)} %)`);
+      if (v > 0.05) row(data.zd[k].name.toLowerCase(), `${v.toFixed(1)} km (${Math.round(v / d.real * 100)} %)`);
     });
     if (d.gaps) row('týdny bez aktivity', String(d.gaps));
     t.style.display = 'block';
