@@ -42,6 +42,10 @@ function sportName(sport) {
    (and the calendar) alone. A year that gets its own team just sets `team`.
    Adding a year: append an entry, nothing else needs to change. */
 const SEASONS = [
+  { label: '2022/23', team: 8,                 start: '2022-10-31', end: '2023-10-29' },
+  { label: '2023/24', team: 108,               start: '2023-10-30', end: '2024-10-27' },
+  /* the 2024/25 team no longer exists: shown from the log alone, through the current team (its roster = current athletes) */
+  { label: '2024/25', team: 117, stats: false, start: '2024-10-28', end: '2025-10-26' },
   { label: '2025/26', team: 117, stats: false, start: '2025-10-27', end: '2026-10-25' },
   { label: '2026/27', team: 117,               start: '2026-10-26', end: '2027-10-24' }
 ];
