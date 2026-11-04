@@ -1528,7 +1528,7 @@ function pvRunZones(run, hist, th) {
 
 /* Fetch the histograms of all runs not in the session cache yet, 2 requests in parallel
    (the API answers 429 to more). Resolves to the number of runs that failed. */
-async function pvLoadHists(runs, onProgress) {
+async function pvLoadHists(runs, onProgress, probe = false) {
   const queue = runs.filter(r => r.hasStream && !pv.zones[r.id]);
   const total = queue.length;
   let done = 0, failed = 0;
@@ -1541,9 +1541,30 @@ async function pvLoadHists(runs, onProgress) {
       onProgress(++done, total);
     }
   };
+  /* With `probe`: first fetch PV_PROBE runs spread over the whole list. If none of them has a heart
+     rate (and none failed), the athlete has no sensor: stop instead of fetching hundreds of streams
+     for nothing. Resolves to -1 then. */
+  if (probe && total > PV_PROBE) {
+    const step = total / PV_PROBE;
+    const sample = Array.from({ length: PV_PROBE }, (_, i) => queue[Math.floor(i * step)]);
+    queue.splice(0, queue.length, ...queue.filter(r => !sample.includes(r)));
+    const sq = sample.slice();
+    const sw = async () => {
+      while (sq.length) {
+        const run = sq.shift();
+        try { pv.zones[run.id] = pvStreamHist((await pvFetchStream(run.id)).results?.data); }
+        catch (e) { failed++; }
+        onProgress(++done, total);
+      }
+    };
+    await Promise.all(Array.from({ length: 2 }, sw));
+    const hasHr = sample.some(r => pv.zones[r.id] && Object.keys(pv.zones[r.id].h).length);
+    if (!hasHr && !failed) return -1;
+  }
   await Promise.all(Array.from({ length: 2 }, worker));
   return failed;
 }
+const PV_PROBE = 10;
 
 const PV_ZONES = [
   { name: 'Aerobní',   hint: 'pod AP',    cls: 'var(--z1)' },
@@ -1702,23 +1723,27 @@ function pvZonePanel(box, chartBox, a, S, data, alive) {
   function plainView() { shown = false; chartBox.replaceChildren(plain); hide.style.display = 'none'; go.textContent = 'Načíst a zobrazit zóny'; status.textContent = ''; toggle.textContent = open ? 'Skrýt panel zón' : 'Tepové zóny…'; }
   hide.addEventListener('click', plainView);
 
+  let probeNext = true;               // after a probe found no heart rate, the next press fetches every run
   go.addEventListener('click', async () => {
     const th = pvThresholds(cfg, season);
     if (th.err) { status.className = 'sz-warn'; status.textContent = th.err; return; }
     status.className = 'sz-note';
     go.disabled = true;
-    const failed = await pvLoadHists(runs, (n, tot) => {
+    let failed = await pvLoadHists(runs, (n, tot) => {
       if (alive()) status.textContent = tot ? `Načítám tepové zóny… ${n} / ${tot} běhů` + (pv.pauseUntil > Date.now() ? ' (server omezuje počet požadavků, chvíli čekám)' : '') : '';
-    });
+    }, probeNext);
     go.disabled = false;
     if (!alive()) return;
+    const noSensor = failed === -1;
+    if (noSensor) failed = 0;
+    probeNext = !noSensor;
     data.forEach(d => { d.zk = [0, 0, 0, 0]; });
     runs.forEach(r => {
       const z = pvRunZones(r, pv.zones[r.id], th.at(r.date)), ci = Math.floor(r.wi / WEEKS_PER_CYCLE);
       if (data[ci]) z.forEach((v, k) => { data[ci].zk[k] += v; });
     });
     const hrKm = data.reduce((t, d) => t + d.zk[0] + d.zk[1] + d.zk[2], 0);
-    if (!(hrKm > 0)) { status.className = 'sz-warn'; status.textContent = 'Aktivity sportovce neobsahují tepová data, zóny nelze zobrazit.'; return; }
+    if (!(hrKm > 0)) { status.className = 'sz-warn'; status.textContent = noSensor ? `V ukázce ${PV_PROBE} běhů z celého roku není žádný s tepem, ostatní se nestahovaly. Zóny nelze zobrazit. Kdyby měl tep jen u několika běhů, stiskněte tlačítko znovu: projdou se všechny (${runs.filter(r => r.hasStream).length} požadavků).` : 'Aktivity sportovce neobsahují tepová data, zóny nelze zobrazit.'; return; }
     status.textContent = '';
     const nn = [
       szNode('p', 'sz-note', `Zóny (tep/min): ${th.label}. Aerobní = pod AP, smíšená = AP až ANP, anaerobní = nad ANP.`),
