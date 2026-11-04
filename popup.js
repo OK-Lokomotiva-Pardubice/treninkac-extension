@@ -1301,7 +1301,7 @@ async function renderSeasons() {
    with the km actually logged by one athlete this training year. The level
    an athlete trains in is picked here and only remembered in this browser. */
 
-const pv = { plan: null, level: {}, uid: null, cache: {} };
+const pv = { plan: null, level: {}, uid: null, cache: {}, runs: {}, hr: {}, zones: {}, pauseUntil: 0, throttled: false };
 
 const pvStartTs = s => Date.parse(s.start + 'T00:00:00Z');
 /* "27.10.–23.11.2025" for the cycle with 0-based index c of a season */
@@ -1326,19 +1326,343 @@ async function pvLoadWeeks(a, season) {
   const t0 = pvStartTs(season);
   const raw   = await apiFetchRetry(`/team/detail/${a.team}/athlete/${a.userId}/training-log`);
   const weeks = Array.from({ length: CYCLES_PER_YEAR * WEEKS_PER_CYCLE }, () => ({ km: 0, n: 0 }));
+  const runs  = [];                       // running activities (for the heart-rate zone split)
   for (const e of Object.values(raw.results?.data || {})) {
     const d = (e.startDate || e.date || '').slice(0, 10);
     if (!d) continue;
     const wi = Math.floor((Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) - t0) / WEEK_MS);
     if (wi < 0 || wi >= weeks.length) continue;
     weeks[wi].n++;
-    if (isRunSport(e.sport)) weeks[wi].km += (e.distance || e.movingDistance || 0) / 1000;
+    if (isRunSport(e.sport)) {
+      const m = e.distance || e.movingDistance || 0;
+      weeks[wi].km += m / 1000;
+      // unprocessed activities (time === null) have no stream
+      runs.push({ id: e.activityId, date: d, wi, m, hasStream: e.time != null });
+    }
   }
+  pv.runs[key] = runs;
   return (pv.cache[key] = weeks);
 }
 
-/* Planned (line) vs. actual (bars) km per cycle; one axis, both in km */
-function pvChart(S, data) {
+const fmtDate2 = d => `${+d.slice(8, 10)}.${+d.slice(5, 7)}.${d.slice(0, 4)}`;
+
+/* ── Heart-rate zones (Plán vs. realita) ───────────────────────
+   Shown only on request (button under the chart): every run needs one stream request.
+   Three zones: aerobic (below the aerobic threshold, AP), mixed (AP up to the anaerobic
+   threshold, ANP) and anaerobic (above ANP). The thresholds come from one of two methods,
+   picked per athlete in the panel and kept only in this browser (chrome.storage.local
+   "hrZones", never in the repo):
+     a) lactate tests: date + AP + ANP in bpm. A test is valid only in the training year its
+        date falls into; an activity uses the latest test dated on or before it (before the
+        first test: the first one). A year without a test cannot be shown.
+     b) estimate from the highest heart rate measured in any activity (entered by hand):
+        AP = 80 %, ANP = 90 % of it. Only a rough guide: lab values of well-trained athletes
+        often lie higher (AP around 90 % of max HR).
+   The per-second stream of a run (/athlete/activity/:id/stream) is reduced to a histogram
+   (metres per bpm, cached for the session), so changing thresholds or method never refetches.
+   Distance is scaled so the zones add up to the logged distance. */
+
+const PV_MAX_AP = 0.80, PV_MAX_ANP = 0.90;
+
+function pvTestFor(tests, date) {
+  let t = tests[0];
+  for (const x of tests) if (x.date <= date) t = x;
+  return t;
+}
+
+/* Thresholds of an athlete's config for a training year: { at(date) → {aet, ant}, label } or { err } */
+function pvThresholds(cfg, yr) {
+  if (cfg.mode === 'max') {
+    const max = Math.round(+cfg.maxHr);
+    if (!(max >= 120 && max <= 230)) return { err: 'Zadejte nejvyšší naměřenou TF (120–230 tepů za minutu).' };
+    const t = { aet: Math.round(max * PV_MAX_AP), ant: Math.round(max * PV_MAX_ANP) };
+    return { at: () => t, label: `odhad z max TF ${max}: AP ${t.aet}, ANP ${t.ant}` };
+  }
+  const tests = (cfg.tests || []).filter(t => t.date >= yr.start && t.date <= yr.end && t.aet > 0 && t.ant > t.aet)
+                                 .sort((x, y) => x.date.localeCompare(y.date));
+  if (!tests.length) return { err: `Pro sezónu ${yr.label} není zadané žádné laktátové měření (měření platí jen v sezóně, do které spadá jeho datum).` };
+  return { at: d => pvTestFor(tests, d),
+           label: 'laktátová měření – ' + tests.map(t => `${fmtDate2(t.date)}: AP ${t.aet}, ANP ${t.ant}`).join(' · ') };
+}
+
+/* Metres and seconds per bpm of one stream, plus metres without a heart rate */
+function pvStreamHist(stream) {
+  const tm = stream?.time, hr = stream?.heartRate, v = stream?.velocity;
+  const h = {}, sec = {}; let noHr = 0, tot = 0;
+  if (!Array.isArray(tm)) return { h, sec, noHr, tot };
+  for (let j = 1; j < tm.length; j++) {
+    const dt = Math.min(tm[j] - tm[j - 1], 10);        // a longer gap is a pause, not running
+    if (!(dt > 0)) continue;
+    const m = (v && v[j] > 0 ? v[j] : 0) * dt;
+    tot += m;
+    const b = hr && Math.round(hr[j]);
+    if (!b) noHr += m; else { h[b] = (h[b] || 0) + m; sec[b] = (sec[b] || 0) + dt; }
+  }
+  return { h, sec, noHr, tot };
+}
+
+/* One stream request that respects the server's rate limit: on HTTP 429 every worker waits
+   (Retry-After, else 2, 4, 8, … s) and the request is repeated; other 5xx / network errors retry shortly */
+const PV_STREAM_TRIES = 8;
+async function pvFetchStream(id) {
+  for (let i = 1; ; i++) {
+    const wait = pv.pauseUntil - Date.now();
+    if (wait > 0) await new Promise(res => setTimeout(res, wait));
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 20000);
+    try {
+      const r = await fetch(`${API}/athlete/activity/${id}/stream`, { headers: { 'Authorization': 'Bearer ' + state.token }, signal: ctl.signal });
+      if (r.status === 429 || r.status >= 500) {
+        if (i >= PV_STREAM_TRIES) throw Object.assign(new Error('HTTP ' + r.status), { fatal: true });
+        const ra = +r.headers.get('Retry-After');
+        const ms = r.status === 429 ? Math.min(60000, (ra > 0 ? ra * 1000 : 2000 * 2 ** (i - 1))) : 400 * i;
+        pv.pauseUntil = Math.max(pv.pauseUntil, Date.now() + ms);
+        if (r.status === 429) pv.throttled = true;
+        continue;
+      }
+      if (!r.ok) throw Object.assign(new Error('HTTP ' + r.status), { fatal: true });
+      return await r.json();
+    } catch (e) {
+      if (e.fatal || i >= PV_STREAM_TRIES) throw e;
+      await new Promise(res => setTimeout(res, 400 * i));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/* Highest heart rate of the given runs that was held for at least `minSec` seconds in total
+   (a lone one-second spike of an optical sensor does not count). 0 when nothing qualifies. */
+function pvMaxHr(runs, minSec = 5) {
+  const secAt = {};
+  for (const r of runs) { const x = pv.zones[r.id]?.sec; if (x) for (const b in x) secAt[b] = (secAt[b] || 0) + x[b]; }
+  let acc = 0;
+  for (const b of Object.keys(secAt).map(Number).sort((x, y) => y - x)) { acc += secAt[b]; if (acc >= minSec) return b; }
+  return 0;
+}
+
+/* km per zone for one run: [aerobic, mixed, anaerobic, no heart rate] */
+function pvRunZones(run, hist, th) {
+  const km = run.m / 1000;
+  if (!hist || !(hist.tot > 0)) return [0, 0, 0, km];
+  const z = [0, 0, 0];
+  for (const b in hist.h) z[+b < th.aet ? 0 : +b < th.ant ? 1 : 2] += hist.h[b];
+  const k = km / hist.tot;
+  return [z[0] * k, z[1] * k, z[2] * k, hist.noHr * k];
+}
+
+/* Fetch the histograms of all runs not in the session cache yet, 2 requests in parallel
+   (the API answers 429 to more). Resolves to the number of runs that failed. */
+async function pvLoadHists(runs, onProgress) {
+  const queue = runs.filter(r => r.hasStream && !pv.zones[r.id]);
+  const total = queue.length;
+  let done = 0, failed = 0;
+  onProgress(0, total);
+  const worker = async () => {
+    while (queue.length) {
+      const run = queue.shift();
+      try { pv.zones[run.id] = pvStreamHist((await pvFetchStream(run.id)).results?.data); }
+      catch (e) { failed++; }
+      onProgress(++done, total);
+    }
+  };
+  await Promise.all(Array.from({ length: 2 }, worker));
+  return failed;
+}
+
+const PV_ZONES = [
+  { name: 'Aerobní',   hint: 'pod AP',    cls: 'var(--z1)' },
+  { name: 'Smíšená',   hint: 'AP – ANP',  cls: 'var(--z2)' },
+  { name: 'Anaerobní', hint: 'nad ANP',   cls: 'var(--z3)' },
+  { name: 'Bez tepu',  hint: '',          cls: 'var(--z0)' }
+];
+
+/* Share of the year's running km per zone as a donut; only km with a heart rate count */
+function pvDonut(data) {
+  const sum = [0, 0, 0, 0];
+  data.forEach(d => { if (d.started && d.zk) d.zk.forEach((v, i) => { sum[i] += v; }); });
+  const hrKm = sum[0] + sum[1] + sum[2], all = hrKm + sum[3];
+  const wrap = szNode('div', 'sz-card pv-donut');
+  if (!(hrKm > 0)) return wrap;
+  const R = 70, r = 44, C = 80;
+  const svg = szSvg('svg', { viewBox: `0 0 ${C * 2} ${C * 2}`, width: C * 2, height: C * 2, role: 'img',
+                             'aria-label': 'Podíl km v tepových zónách za sezónu' });
+  let a0 = -Math.PI / 2;
+  const P = (rad, a) => `${C + rad * Math.cos(a)},${C + rad * Math.sin(a)}`;
+  sum.slice(0, 3).forEach((v, i) => {
+    if (!(v > 0)) return;
+    const frac = v / hrKm, a1 = a0 + Math.min(frac, 0.99999) * 2 * Math.PI, big = frac > 0.5 ? 1 : 0;
+    szSvg('path', { d: `M${P(R, a0)} A${R},${R} 0 ${big} 1 ${P(R, a1)} L${P(r, a1)} A${r},${r} 0 ${big} 0 ${P(r, a0)} Z`,
+                    fill: PV_ZONES[i].cls, stroke: 'var(--surface)', 'stroke-width': 1.5 }, svg);
+    a0 = a1;
+  });
+  const t1 = szSvg('text', { x: C, y: C - 2, 'text-anchor': 'middle', 'font-size': 18, 'font-weight': 600, fill: 'var(--text)' }, svg);
+  t1.textContent = Math.round(hrKm) + ' km';
+  const t2 = szSvg('text', { x: C, y: C + 14, 'text-anchor': 'middle', 'font-size': 10, fill: 'var(--text-sec)' }, svg);
+  t2.textContent = 's tepem';
+  const list = szNode('div', 'pv-donut-list');
+  list.appendChild(szNode('div', 'h', 'Podíl km v tepových zónách (sezóna)'));
+  sum.slice(0, 3).forEach((v, i) => {
+    const row = szNode('div', 'r');
+    const sw = szNode('i', 'pv-sw-bar'); sw.style.background = PV_ZONES[i].cls;
+    row.append(sw, szNode('b', null, Math.round(v / hrKm * 100) + ' %'),
+               szNode('span', null, `${PV_ZONES[i].name} (${PV_ZONES[i].hint}) · ${v.toFixed(0)} km`));
+    list.appendChild(row);
+  });
+  if (sum[3] > 0.5) list.appendChild(szNode('div', 'pv-donut-note',
+    `Bez tepové informace: ${sum[3].toFixed(0)} km (${Math.round(sum[3] / all * 100)} % běhu), do podílů se nepočítá.`));
+  wrap.append(svg, list);
+  return wrap;
+}
+
+/* Panel under the chart: pick the method, enter the thresholds, then load and show the zones.
+   `alive()` tells whether the page still shows this athlete and year (async renders may be late). */
+function pvZonePanel(box, chartBox, a, S, data, alive) {
+  const cfg  = pv.hr[a.userId] || (pv.hr[a.userId] = { mode: 'lab', maxHr: '', tests: [] });
+  const save = () => chrome.storage.local.set({ hrZones: pv.hr });
+  const plain = chartBox.firstChild;                     // the chart without zones
+  const runs  = pv.runs[S.year + ':' + a.userId] || [];
+  let open = false, shown = false;
+
+  const toggle = szNode('button', 'ghost', 'Tepové zóny…');
+  const panel  = szNode('div', 'sz-card pv-zpanel');
+  panel.style.display = 'none';
+  const status = szNode('p', 'sz-note');
+  box.append(toggle, panel);
+  toggle.addEventListener('click', () => {
+    open = !open; panel.style.display = open ? '' : 'none';
+    toggle.textContent = open ? 'Skrýt panel zón' : (shown ? 'Tepové zóny (zobrazeno)' : 'Tepové zóny…');
+  });
+
+  /* --- method --- */
+  const mk = (value, text) => {
+    const l = szNode('label', 'pv-radio'), r = szNode('input');
+    r.type = 'radio'; r.name = 'pv-mode-' + a.userId; r.value = value; r.checked = cfg.mode === value;
+    r.addEventListener('change', () => { cfg.mode = value; save(); sync(); });
+    l.append(r, document.createTextNode(' ' + text));
+    return l;
+  };
+  const methods = szNode('div', 'pv-methods');
+  methods.append(mk('lab', 'a) Z laktátových měření (AP a ANP)'), mk('max', 'b) Odhad z nejvyšší naměřené TF'));
+
+  /* --- a) lactate tests --- */
+  const lab  = szNode('div');
+  const list = szNode('div', 'pv-tests');
+  const num  = (ph, w) => { const i = szNode('input'); i.type = 'number'; i.placeholder = ph; i.style.width = w; i.min = 60; i.max = 230; return i; };
+  const fDate = szNode('input'); fDate.type = 'date';
+  const fAet = num('AP', '70px'), fAnt = num('ANP', '70px');
+  const add = szNode('button', null, 'Přidat měření');
+  const msg = szNode('span', 'sz-warn');
+  add.addEventListener('click', () => {
+    const t = { date: fDate.value, aet: +fAet.value, ant: +fAnt.value };
+    msg.textContent = '';
+    if (!t.date) { msg.textContent = 'Zadejte datum měření.'; return; }
+    if (!(t.aet > 0 && t.ant > t.aet)) { msg.textContent = 'ANP musí být větší než AP (tepy za minutu).'; return; }
+    cfg.tests = (cfg.tests || []).filter(x => x.date !== t.date).concat(t).sort((x, y) => x.date.localeCompare(y.date));
+    fDate.value = fAet.value = fAnt.value = '';
+    save(); drawTests();
+  });
+  const form = szNode('div', 'pv-form');
+  form.append(fDate, fAet, fAnt, add, msg);
+  lab.append(szNode('div', 'sz-note', 'Měření platí jen v tréninkovém roce, do kterého spadá jeho datum. Tepy za minutu na aerobním (2 mmol/l) a anaerobním prahu (4 mmol/l).'), list, form);
+  function drawTests() {
+    list.replaceChildren();
+    (cfg.tests || []).forEach((t, i) => {
+      const inYear = t.date >= season.start && t.date <= season.end;
+      const row = szNode('div', 'pv-test' + (inYear ? '' : ' off'));
+      const del = szNode('button', 'ghost', '✕'); del.title = 'Smazat měření';
+      del.addEventListener('click', () => { cfg.tests.splice(i, 1); save(); drawTests(); });
+      row.append(szNode('span', null, fmtDate2(t.date)), szNode('span', null, `AP ${t.aet}`), szNode('span', null, `ANP ${t.ant}`),
+                 szNode('span', 'dim', inYear ? `platí pro ${season.label}` : 'jiná sezóna'), del);
+      list.appendChild(row);
+    });
+    if (!(cfg.tests || []).length) list.appendChild(szNode('div', 'dim', 'Zatím žádné měření.'));
+  }
+
+  /* --- b) highest measured heart rate --- */
+  const mxBox = szNode('div');
+  const mIn = szNode('input'); mIn.type = 'number'; mIn.placeholder = 'max TF'; mIn.min = 120; mIn.max = 230; mIn.style.width = '90px';
+  mIn.value = cfg.maxHr || '';
+  const prev = szNode('span', 'dim');
+  const hint = szNode('div', 'sz-note');
+  const auto = szNode('button', 'ghost', 'Zjistit z posledních 4 týdnů');
+  const showPrev = () => { const t = pvThresholds({ mode: 'max', maxHr: mIn.value }, season); prev.textContent = t.err ? '' : ' → ' + t.label; };
+  mIn.addEventListener('input', () => { cfg.maxHr = mIn.value; save(); showPrev(); });
+  const mrow = szNode('div', 'pv-form');
+  mrow.append(szNode('span', null, 'Nejvyšší naměřená TF (tepů/min):'), mIn, auto, prev);
+  mxBox.append(szNode('div', 'sz-note', `Zadejte nejvyšší tep skutečně naměřený při některé aktivitě. AP = ${PV_MAX_AP * 100} %, ANP = ${PV_MAX_ANP * 100} % z něj. Jen hrubý odhad – u dobře trénovaných sportovců bývají laboratorní prahy výš.`), mrow, hint);
+  showPrev();
+  /* prefill from the last 4 weeks of the year shown (ending today, or at the end of a past year) */
+  const winRuns = () => {
+    const end = new Date(Math.min(Date.now(), Date.parse(season.end + 'T23:59:59Z')));
+    const to = end.toISOString().slice(0, 10), from = new Date(end.getTime() - 27 * DAY_MS).toISOString().slice(0, 10);
+    return { runs: runs.filter(r => r.date >= from && r.date <= to), from, to };
+  };
+  auto.addEventListener('click', async () => {
+    const w = winRuns();
+    const withHr = w.runs.filter(r => r.hasStream);
+    hint.className = 'sz-note';
+    if (!withHr.length) { hint.className = 'sz-warn'; hint.textContent = `V období ${fmtDate2(w.from)} – ${fmtDate2(w.to)} nejsou žádné zpracované běhy.`; return; }
+    auto.disabled = true;
+    const failed = await pvLoadHists(withHr, (n, tot) => { if (alive()) hint.textContent = tot ? `Načítám tep z posledních 4 týdnů… ${n} / ${tot} běhů` : ''; });
+    auto.disabled = false;
+    if (!alive()) return;
+    const mx = pvMaxHr(withHr);
+    if (!mx) { hint.className = 'sz-warn'; hint.textContent = `V období ${fmtDate2(w.from)} – ${fmtDate2(w.to)} nemají běhy tepová data.`; return; }
+    mIn.value = cfg.maxHr = mx; save(); showPrev();
+    hint.textContent = `Nejvyšší tep za ${fmtDate2(w.from)} – ${fmtDate2(w.to)}: ${mx} (ojedinělé špičky kratší než 5 s se nepočítají)` +
+      (failed ? `; ${failed} běhů se nepodařilo načíst, hodnota může být nižší` : '') + '. Ověřte a případně upravte.';
+  });
+  /* --- actions --- */
+  const go   = szNode('button', null, 'Načíst a zobrazit zóny');
+  const hide = szNode('button', 'ghost', 'Zobrazit bez zón');
+  hide.style.display = 'none';
+  const actions = szNode('div', 'pv-form');
+  actions.append(go, hide);
+
+  function sync() {
+    lab.style.display = cfg.mode === 'lab' ? '' : 'none';
+    mxBox.style.display = cfg.mode === 'max' ? '' : 'none';
+  }
+  function plainView() { shown = false; chartBox.replaceChildren(plain); hide.style.display = 'none'; go.textContent = 'Načíst a zobrazit zóny'; status.textContent = ''; toggle.textContent = open ? 'Skrýt panel zón' : 'Tepové zóny…'; }
+  hide.addEventListener('click', plainView);
+
+  go.addEventListener('click', async () => {
+    const th = pvThresholds(cfg, season);
+    if (th.err) { status.className = 'sz-warn'; status.textContent = th.err; return; }
+    status.className = 'sz-note';
+    go.disabled = true;
+    const failed = await pvLoadHists(runs, (n, tot) => {
+      if (alive()) status.textContent = tot ? `Načítám tepové zóny… ${n} / ${tot} běhů` + (pv.pauseUntil > Date.now() ? ' (server omezuje počet požadavků, chvíli čekám)' : '') : '';
+    });
+    go.disabled = false;
+    if (!alive()) return;
+    data.forEach(d => { d.zk = [0, 0, 0, 0]; });
+    runs.forEach(r => {
+      const z = pvRunZones(r, pv.zones[r.id], th.at(r.date)), ci = Math.floor(r.wi / WEEKS_PER_CYCLE);
+      if (data[ci]) z.forEach((v, k) => { data[ci].zk[k] += v; });
+    });
+    const hrKm = data.reduce((t, d) => t + d.zk[0] + d.zk[1] + d.zk[2], 0);
+    if (!(hrKm > 0)) { status.className = 'sz-warn'; status.textContent = 'Aktivity sportovce neobsahují tepová data, zóny nelze zobrazit.'; return; }
+    status.textContent = '';
+    const nn = [
+      szNode('p', 'sz-note', `Zóny (tep/min): ${th.label}. Aerobní = pod AP, smíšená = AP až ANP, anaerobní = nad ANP.`),
+      szNode('p', 'sz-note', 'Pozor: tep reaguje se zpožděním, takže krátké úseky (zhruba pod 1 minutu) v zónách nevyniknou a čas rychlého úseku se zčásti započítá do nižší zóny. ' +
+        'Podíly dobře ukazují strukturu objemu, ne splnění jednotlivého intervalového tréninku.')
+    ];
+    if (failed) nn.push(szNode('p', 'sz-warn', `U ${failed} běhů se tep nepodařilo načíst, jsou započítány jako „bez tepu". Zkuste to za chvíli znovu.`));
+    shown = true;
+    chartBox.replaceChildren(pvChart(S, data, true), pvDonut(data), ...nn);
+    hide.style.display = ''; go.textContent = 'Přepočítat zóny';
+    toggle.textContent = open ? 'Skrýt panel zóny' : 'Tepové zóny (zobrazeno)';
+  });
+
+  panel.append(methods, lab, mxBox, actions, status);
+  sync(); drawTests();
+}
+
+/* Planned (line) vs. actual (bars) km per cycle; one axis, both in km.
+   With zoned data (d.zk) the bar is stacked by heart-rate zone. */
+function pvChart(S, data, zoned) {
   const W = 760, H = 240, ml = 40, mr = 12, mt = 12, mb = 38;
   const n   = data.length;
   const top = Math.max(1, ...data.map(d => Math.max(d.pl, d.started ? d.real : 0)));
@@ -1349,9 +1673,18 @@ function pvChart(S, data) {
 
   const wrap = szNode('div', 'sz-card pv-chart');
   const legend = szNode('div', 'sz-legend pv-legend');
-  const sw1 = szNode('span'); sw1.append(szNode('i', 'pv-sw-bar'), document.createTextNode('Skutečnost (km běhu)'));
+  if (zoned) {
+    PV_ZONES.forEach(z => {
+      const sw = szNode('span'), i = szNode('i', 'pv-sw-bar'); i.style.background = z.cls;
+      sw.append(i, document.createTextNode(z.hint ? `${z.name} (${z.hint})` : z.name));
+      legend.appendChild(sw);
+    });
+  } else {
+    const sw1 = szNode('span'); sw1.append(szNode('i', 'pv-sw-bar'), document.createTextNode('Skutečnost (km běhu)'));
+    legend.appendChild(sw1);
+  }
   const sw2 = szNode('span'); sw2.append(szNode('i', 'pv-sw-line'), document.createTextNode('Plán'));
-  legend.append(sw1, sw2);
+  legend.appendChild(sw2);
   wrap.appendChild(legend);
 
   const svg = szSvg('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img',
@@ -1366,7 +1699,15 @@ function pvChart(S, data) {
       szSvg('circle', { cx: X(i), cy: H - 8, r: 3, fill: 'var(--alert)' }, svg);
       szSvg('text', { x: X(i) + 7, y: H - 4.5, 'font-size': 10, fill: 'var(--text-sec)' }, svg).textContent = d.gaps + '×';
     }
-    if (d.started && d.real > 0) {
+    if (zoned && d.zk && d.started && d.real > 0) {
+      let acc = 0;
+      d.zk.forEach((v, k) => {
+        if (!(v > 0)) return;
+        szSvg('rect', { x: X(i) - bw / 2, width: bw, y: Y(acc + v), height: Math.max(0, Y(acc) - Y(acc + v)),
+                        fill: PV_ZONES[k].cls, opacity: d.finished ? 1 : 0.45 }, svg);
+        acc += v;
+      });
+    } else if (d.started && d.real > 0) {
       const y = Y(d.real), h = Y(0) - y, r = Math.min(4, bw / 2, h);
       szSvg('path', { d: `M${X(i) - bw / 2},${Y(0)} V${y + r} Q${X(i) - bw / 2},${y} ${X(i) - bw / 2 + r},${y} H${X(i) + bw / 2 - r} Q${X(i) + bw / 2},${y} ${X(i) + bw / 2},${y + r} V${Y(0)} Z`,
                   fill: 'var(--accent)', opacity: d.finished ? 1 : 0.45 }, svg);
@@ -1390,6 +1731,9 @@ function pvChart(S, data) {
     const row = (k, v) => { const e = szNode('div', 'r'); e.append(szNode('b', null, v), szNode('span', null, k)); t.appendChild(e); };
     row('plán', d.pl + ' km');
     row('skutečnost', d.started ? d.real.toFixed(1) + ' km' + (d.finished ? ` (${Math.round(d.real / d.pl * 100)} %)` : ' (probíhá)') : '—');
+    if (zoned && d.zk && d.started) d.zk.forEach((v, k) => {
+      if (v > 0.05) row(PV_ZONES[k].name.toLowerCase(), `${v.toFixed(1)} km (${Math.round(v / d.real * 100)} %)`);
+    });
     if (d.gaps) row('týdny bez aktivity', String(d.gaps));
     t.style.display = 'block';
     let x = ev.clientX + 14, y = ev.clientY + 14;
@@ -1413,8 +1757,9 @@ async function renderPlan() {
   let plan, roster;
   try {
     [plan, roster] = await Promise.all([pvLoadPlan(), szLoadRoster()]);
-    const stored = await chrome.storage.local.get('planLevels');
+    const stored = await chrome.storage.local.get(['planLevels', 'hrZones']);
     pv.level = stored.planLevels || pv.level;
+    pv.hr    = stored.hrZones || pv.hr;
   } catch (e) {
     const err = szNode('div', 'state-box');
     const retry = szNode('button', 'ghost', 'Zkusit znovu');
@@ -1530,9 +1875,13 @@ async function renderPlan() {
       `Dokončené cykly: plán ${sumPlan} km, skutečnost ${sumReal.toFixed(0)} km` +
       (sumPlan ? ` (${Math.round(sumReal / sumPlan * 100)} % plánu)` : '') +
       `. Týdnů bez jakékoli aktivity: ${gaps}.`);
-    out.replaceChildren(pvChart(S, data), sum, wrap,
-      szNode('p', 'sz-note', 'Plán je z přehledu objemů (plánované km na cyklus). Týdenní plán v km neexistuje, proto se porovnává po cyklech. ' +
-        'Týden bez aktivity může být nemoc, zranění i pauza – z deníku se to rozlišit nedá. Zvýrazněné týdny: červeně bez aktivity, žlutě bez běhu.'));
+    const footer = szNode('p', 'sz-note', 'Plán je z přehledu objemů (plánované km na cyklus). Týdenní plán v km neexistuje, proto se porovnává po cyklech. ' +
+        'Týden bez aktivity může být nemoc, zranění i pauza – z deníku se to rozlišit nedá. Zvýrazněné týdny: červeně bez aktivity, žlutě bez běhu.');
+    const chartBox = szNode('div');
+    chartBox.appendChild(pvChart(S, data));
+    const zoneBox = szNode('div', 'pv-zbox');
+    out.replaceChildren(chartBox, zoneBox, sum, wrap, footer);
+    pvZonePanel(zoneBox, chartBox, a, S, data, () => pv.uid === a.userId && planSeason() === S && sz.active);
   }
 
   root.append(bar, out);

@@ -26,6 +26,10 @@
   --cycle-row:   #111C2C;
   --week-row:    #0E1624;
   --hover:       rgba(255,255,255,0.05);
+  --z1:          #5FA8F0;   /* heart-rate zones: aerobic, mixed, anaerobic, no heart rate */
+  --z2:          #F2C14E;
+  --z3:          #F0703C;
+  --z0:          #4A5C7A;
 }
 
 html, body {
@@ -690,6 +694,21 @@ td.num { text-align: right; }
 .pv-legend { margin: 0 0 6px; }
 .pv-sw-bar  { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--accent); }
 .pv-sw-line { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--text); }
+.pv-donut { display: flex; align-items: center; gap: 24px; margin-bottom: 14px; flex-wrap: wrap; }
+.pv-donut-list .h { font-weight: 600; margin-bottom: 8px; }
+.pv-donut-list .r { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.pv-donut-list .r b { min-width: 40px; }
+.pv-donut-list .r span { color: var(--text-sec); }
+.pv-donut-note { margin-top: 8px; color: var(--text-sec); font-size: 12px; }
+.pv-zbox { margin-bottom: 14px; }
+.pv-zpanel { margin-top: 10px; padding: 12px 14px; }
+.pv-methods { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; }
+.pv-radio { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.pv-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.pv-form input { padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
+.pv-test { display: flex; gap: 14px; align-items: center; padding: 3px 0; }
+.pv-test.off { opacity: 0.5; }
+.pv-test .dim, .pv-zpanel .dim { color: var(--text-sec); }
 .pv-strip { white-space: nowrap; }
 .pv-chip { display: inline-block; min-width: 26px; margin-left: 4px; padding: 1px 5px; border-radius: 4px; background: var(--hover); color: var(--text-sec); font-size: 11px; text-align: center; }
 .pv-chip.gap   { background: rgba(255,107,107,0.18); color: var(--alert); }

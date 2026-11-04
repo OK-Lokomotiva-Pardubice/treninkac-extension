@@ -26,6 +26,7 @@ Endpoints used:
   GET /team/detail/117/athlete/:uid                        → Tréninkáč weekly/cycle statistics + sport stats (not the training plan)
   GET /team/detail/117/athlete/:uid/training-log           → individual activity log
   GET /team/detail/117/athlete/:uid/calendar               → results.data.activityList[]: events of type activity | sickness | regeneration (sickness = a from–to record, `start`/`end`)
+  GET /athlete/activity/:activityId/stream                 → per-second arrays time, heartRate, velocity, speedKmh, altitude, … (heartRate is empty for athletes without a sensor; not for unprocessed activities)
   GET /team/{117,108,8}/stats                              → rosters for the Sezóny page
   GET /team/detail/{team}/athlete/:uid/training-log        → same log, fetched via the team the athlete belongs to
 ```
@@ -215,6 +216,7 @@ sz = {               // Sezóny page
 - **Celkové součty** page: all athletes loaded in parallel, sortable summary table
 - **Sezóny** page: progress of every athlete (current and former members of teams 117/108/8) across the last 4 training years, per cycle, as small-multiple line charts (Běh km / Zátěž) or a table; default sort by volume of the newest shown year
 - **Plán vs. realita** page: per athlete and the training year picked in the header dropdown, planned vs. actual running km per cycle — chart (bars = actual, line = plan, red dot = weeks without any activity), summary and a table with weekly chips. The plan level is picked per athlete and year and remembered in `chrome.storage.local` (`planLevels`)
+- **Tepové zóny na Plán vs. realita** (button "Tepové zóny…" under the chart; nothing is fetched until "Načíst a zobrazit zóny" is pressed): the thresholds are chosen per athlete in the panel and stored only in `chrome.storage.local` under `hrZones` (never in the repo, they are health data of minors) — a) lactate tests (date, AP, ANP in bpm; a test is valid only in the training year its date falls into, an activity uses the latest one dated before it, before the first one the first), or b) an estimate from the highest measured heart rate entered by hand (AP 80 %, ANP 90 % of it; only rough; the button "Zjistit z posledních 4 týdnů" prefills it with the highest bpm held ≥ 5 s in the runs of the last 4 weeks of the shown year). Bars are stacked into aerobic (< AP), mixed (AP–ANP) and anaerobic (> ANP) km, plus a donut of the year; runs without heart rate are grey and left out of the shares. Each run's stream is reduced to a metres-per-bpm histogram cached for the session (`pv.zones`), so changing thresholds does not refetch; streams are fetched 2 in parallel via `pvFetchStream`, which waits and retries on HTTP 429 (limit 1000 requests per window). Caveat: heart rate lags, so reps shorter than about a minute do not show in the zones
 - **Kalendář** toggle in the athlete view (next to Tabulka): 13 small calendars, one per cycle, days shaded by run km; pips top-right per activity when a day has several or an unprocessed one (red), click a day for links to its activities
 
 ## Releasing
@@ -224,4 +226,4 @@ Bump `"version"` in `manifest.json`, commit, then:
 git tag v1.x.x
 git push origin v1.x.x
 ```
-GitHub Actions (`.github/workflows/release.yml`) zips the five extension files (`manifest.json`, `background.js`, `dashboard.html`, `popup.js`, `plan.json`) and publishes a GitHub Release automatically. See `RELEASE.md` for details.
+GitHub Actions (`.github/workflows/release.yml`) zips the extension files (`manifest.json`, `background.js`, `dashboard.html`, `popup.js`, `plan.json`) and publishes a GitHub Release automatically. See `RELEASE.md` for details.

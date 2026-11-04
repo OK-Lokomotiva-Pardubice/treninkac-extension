@@ -130,6 +130,7 @@ Odkaz **Plán vs. realita** porovná plánované kilometry po cyklech se skuteč
 - Plán se řídí sezónou vybranou v horní liště. Na stránce vyberete **sportovce** a jeho **úroveň v plánu** (pro 2026/27 kasper, emil, simone; pro 2025/26 ještě kasper+). Úroveň se pamatuje jen v tomto prohlížeči, zvlášť pro každého sportovce a sezónu. Pokud pro sezónu plán v `plan.json` není, zobrazí se upozornění.
 - Graf ukazuje skutečné km běhu (sloupce) proti plánu (čára). Červená tečka pod cyklem znamená týdny bez jakékoli aktivity.
 - Pod grafem je souhrn za dokončené cykly a tabulka s rozdílem, % plánu a týdny (červeně bez aktivity, žlutě bez běhu).
+- Pod grafem je tlačítko **Tepové zóny…**. Zóny se stahují až po kliknutí na „Načíst a zobrazit zóny". Prahy zadáte pro každého sportovce buď z laktátových měření (datum, AP a ANP v tepech; měření platí jen v sezóně, do které spadá jeho datum), nebo jako odhad z nejvyšší naměřené TF (AP = 80 %, ANP = 90 %; tlačítko „Zjistit z posledních 4 týdnů" ho předvyplní nejvyšším tepem z běhů za poslední 4 týdny). Sloupce grafu se pak rozdělí na aerobní / smíšenou / anaerobní zónu a pod grafem je koláč za sezónu. Hodnoty se ukládají jen v tomto prohlížeči, ne v repozitáři. Zóny se počítají z tepu po sekundách, takže krátké úseky (do cca 1 min) v nich nevyniknou.
 - Plán je v souboru `plan.json` (objemy z přehledu objemů); pro další rok se přidá další položka do `seasons`.
 
 Týdenní plán v km neexistuje, proto se porovnává po cyklech. Týden bez aktivity může být nemoc, zranění i pauza, z deníku to rozlišit nejde.
