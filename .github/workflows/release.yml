@@ -31,19 +31,38 @@ jobs:
             plan.json \
             -x "*.git*"
 
+      - name: Release notes
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          # "Co je nového" = the row of this version in the version table at the bottom of README.md
+          ROW=$(grep -F "| **$V** |" README.md | head -n 1 || true)
+          DATE=$(printf '%s' "$ROW" | awk -F'|' '{gsub(/^ +| +$/, "", $3); print $3}')
+          DESC=$(printf '%s' "$ROW" | sed -E 's/^\| *\*\*[^|]+\*\* *\| *[^|]* *\| *//; s/ *\|[[:space:]]*$//')
+          {
+            echo "## Co je nového ve verzi $V"
+            echo
+            if [ -n "$DESC" ]; then
+              [ -n "$DATE" ] && echo "_${DATE}_" && echo
+              printf '%s\n' "$DESC"
+            else
+              echo "Popis této verze není v tabulce verzí v README."
+            fi
+            echo
+            echo "## Instalace"
+            echo
+            echo "1. Stáhněte soubor \`treninkac-dashboard-$V.zip\`"
+            echo "2. Rozbalte zip do libovolné složky"
+            echo "3. V Chrome otevřete \`chrome://extensions\`, zapněte **Režim pro vývojáře** a klikněte na **Načíst rozbalené**"
+            echo "4. Vyberte rozbalenou složku"
+            echo
+            echo "Podrobný návod a přehled všech verzí: viz [README](https://github.com/${{ github.repository }}/blob/main/README.md)"
+          } > release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "Treninkac Dashboard v${{ steps.version.outputs.version }}"
-          body: |
-            ## Instalace
-
-            1. Stáhněte soubor `treninkac-dashboard-${{ steps.version.outputs.version }}.zip`
-            2. Rozbalte zip do libovolné složky
-            3. V Chrome otevřete `chrome://extensions`, zapněte **Režim pro vývojáře** a klikněte na **Načíst rozbalené**
-            4. Vyberte rozbalenou složku
-
-            Podrobný návod: viz [README](https://github.com/${{ github.repository }}/blob/main/README.md)
+          body_path: release-notes.md
           files: treninkac-dashboard-${{ steps.version.outputs.version }}.zip
           draft: false
           prerelease: false

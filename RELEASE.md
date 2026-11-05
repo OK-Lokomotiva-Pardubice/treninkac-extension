@@ -13,30 +13,32 @@
    - **MINOR** (1.0.0 → 1.1.0) – nová funkce, zpětně kompatibilní
    - **MAJOR** (1.0.0 → 2.0.0) – zásadní změna nebo přepracování
 
-3. Commitněte změnu verze:
+3. Přidejte do tabulky **Verze** na konci `README.md` řádek pro novou verzi (`| **1.2.3** | datum | stručný popis změn |`). Z něj se automaticky vezme text „Co je nového“ na stránce Release na GitHubu. Pokud řádek chybí, Release vznikne s upozorněním, že popis není k dispozici.
+
+4. Commitněte změnu verze (a README):
    ```bash
-   git add manifest.json
+   git add manifest.json README.md
    git commit -m "chore: bump version to 1.2.3"
    git push
    ```
 
 ## Vydání
 
-4. Vytvořte tag odpovídající nové verzi (musí začínat `v`):
+5. Vytvořte tag odpovídající nové verzi (musí začínat `v`):
    ```bash
    git tag v1.2.3
    git push origin v1.2.3
    ```
 
-5. GitHub Actions automaticky:
+6. GitHub Actions automaticky:
    - zabalí soubory rozšíření do `treninkac-dashboard-1.2.3.zip`
-   - vytvoří nový Release na GitHubu s tímto zipem jako přílohou
+   - vytvoří nový Release na GitHubu s tímto zipem jako přílohou a s textem „Co je nového“ z README
 
 ## Ověření
 
-6. Přejděte na záložku **Actions** v repozitáři a zkontrolujte, že workflow `Release` proběhl bez chyby.
+7. Přejděte na záložku **Actions** v repozitáři a zkontrolujte, že workflow `Release` proběhl bez chyby.
 
-7. Přejděte na záložku **Releases** a ověřte, že nová verze je viditelná a zip je přiložen.
+8. Přejděte na záložku **Releases** a ověřte, že nová verze je viditelná a zip je přiložen.
 
 ## Oprava chybně vydané verze
 
