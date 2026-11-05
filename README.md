@@ -68,7 +68,7 @@ Rozšíření potřebuje přístupový token z aplikace Tréninkáč. Jsou dva z
 
 ### Přehled sportovce
 
-Po přihlášení se v levém sloupci zobrazí seznam sportovců týmu (seřazený abecedně podle příjmení). Kliknutím na sportovce se načtou jeho tréninková data za aktuální sezónu (27. 10. 2025 – 25. 10. 2026).
+Po přihlášení se v levém sloupci zobrazí seznam sportovců týmu (seřazený abecedně podle příjmení). Kliknutím na sportovce se načtou jeho tréninková data za vybranou sezónu (v liště nad obsahem; k dispozici je 2022/23 až 2026/27).
 
 Nad tabulkou jsou zobrazeny celkové součty za sezónu: počet cyklů, tréninkových dnů (DZ), aktivit (FA), celková vzdálenost běhu a čas pohybu. Pokud sportovec má nezpracované záznamy, zobrazí se jejich počet červeně.
 
@@ -95,11 +95,11 @@ Sloupce tabulky:
 
 ### Kalendář
 
-V pohledu sportovce přepne **Tabulka | Kalendář** zobrazení na 13 malých kalendářů, jeden na cyklus.
+V pohledu sportovce přepne **Tabulka | Kalendář** zobrazení na kalendář **jednoho cyklu**; tlačítky **‹ ›** se přepíná mezi C1 a C13 (otevře se cyklus dnešního dne).
 
-- Den je vybarvený podle km běhu (relativně k nejdelšímu dni sportovce), šrafovaný je den s jiným sportem bez běhu, modrý rámeček je závod a oranžová tečka nemoc.
-- Čtverečky vpravo nahoře ukazují aktivity dne, pokud je jich víc nebo je některá nezpracovaná (plná = běh, prázdná = jiný sport, červená = nezpracováno). Červené T.. a C.. značí týden/cyklus s nezpracovanou aktivitou.
-- Kliknutí na den zobrazí odkazy na jeho aktivity v Tréninkáči.
+- V každém dni je široký pruh pro každou aktivitu s názvem a km. Běh je zelený (tmavší = delší oproti nejdelšímu běhu sportovce), jiný sport je šrafovaný, nezpracovaná aktivita má červený okraj, závod barevný okraj a nemoc je označená tečkou. Dní s více aktivitami (i 10 a více) se pruhy skládají pod sebe.
+- Kliknutí na pruh otevře aktivitu rovnou v Tréninkáči. Červené T.. a C.. značí týden/cyklus s nezpracovanou aktivitou.
+- Při zapnutých tepových zónách se pruh běhu rozdělí podle podílu zón (viz Tepové zóny níže).
 
 ### Kopírování do schránky
 
@@ -113,7 +113,7 @@ Tabulku lze seřadit kliknutím na záhlaví libovolného sloupce; opakovaným k
 
 ### Sezóny
 
-Odkaz **Sezóny** v horní liště ukazuje pokrok každého sportovce napříč tréninkovými roky (sezóna vybraná v horní liště a až tři předchozí, novější se nezobrazují), bez ohledu na to, v jakém týmu který rok proběhl. Zahrnuje současné i bývalé členy z týmů 117, 108 a 8 (bývalí jsou označeni „bývalý“).
+Záložka **Sezóny** (v Týmu přehled všech, u sportovce jen jeho grafy) ukazuje pokrok každého sportovce napříč tréninkovými roky (sezóna vybraná v liště a až tři předchozí, novější se nezobrazují), bez ohledu na to, v jakém týmu který rok proběhl. Zahrnuje současné i bývalé členy z týmů 117, 108 a 8 (bývalí jsou označeni „bývalý“).
 
 - Pro každého sportovce je malý graf s hodnotami po cyklech C1–C13, každá sezóna jedna čára.
 - Přepínač **Běh km / Zátěž** mění ukazatel, **Grafy / Tabulka** způsob zobrazení.
@@ -125,12 +125,12 @@ Data se skládají z tréninkového deníku sportovce, takže nezávisí na tým
 
 ### Plán vs. realita
 
-Odkaz **Plán vs. realita** porovná plánované kilometry po cyklech se skutečností jednoho sportovce.
+Záložka **Plán vs. realita** v detailu sportovce porovná plánované kilometry po cyklech se skutečností.
 
-- Plán se řídí sezónou vybranou v horní liště. Na stránce vyberete **sportovce** a jeho **úroveň v plánu** (pro 2026/27 kasper, emil, simone; pro 2025/26 ještě kasper+). Úroveň se pamatuje jen v tomto prohlížeči, zvlášť pro každého sportovce a sezónu. Pokud pro sezónu plán v `plan.json` není, zobrazí se upozornění.
+- Plán se řídí sezónou vybranou v liště. Sportovce vyberete vlevo, na stránce jeho **úroveň v plánu** (pro 2026/27 kasper, emil, simone; pro 2025/26 ještě kasper+). Úroveň se pamatuje jen v tomto prohlížeči, zvlášť pro každého sportovce a sezónu. Pokud pro sezónu plán v `plan.json` není, zobrazí se upozornění.
 - Graf ukazuje skutečné km běhu (sloupce) proti plánu (čára). Červená tečka pod cyklem znamená týdny bez jakékoli aktivity.
 - Pod grafem je souhrn za dokončené cykly a tabulka s rozdílem, % plánu a týdny (červeně bez aktivity, žlutě bez běhu).
-- Pod grafem je tlačítko **Tepové zóny…**. Zóny se stahují až po kliknutí na „Načíst a zobrazit zóny". Prahy zadáte pro každého sportovce buď z laktátových měření (datum, AP a ANP v tepech; měření platí jen v sezóně, do které spadá jeho datum), nebo jako odhad z nejvyšší naměřené TF (AP = 80 %, ANP = 90 %; tlačítko „Zjistit z posledních 4 týdnů" ho předvyplní nejvyšším tepem z běhů za poslední 4 týdny). Sloupce grafu se pak rozdělí na aerobní / smíšenou / anaerobní zónu a pod grafem je koláč za sezónu. Hodnoty se ukládají jen v tomto prohlížeči, ne v repozitáři. Zóny se počítají z tepu po sekundách, takže krátké úseky (do cca 1 min) v nich nevyniknou.
+- **Tepové zóny:** tlačítko **Tepové zóny…** (zelené, v liště vpravo vedle Obnovit data) otevře panel s prahy sportovce. „Zobrazit zóny" je zapne pro tohoto sportovce na dobu relace; pak je uvidíte v Plánu vs. realita (sloupce rozdělené podle zón a koláč za sezónu) i v kalendáři. Bez zón nebo bez platných prahů pro sezónu zůstává vše zelené. Prahy zadáte buď z **laktátových měření** (datum, AP, tep při 3 mmol/l a ANP; měření platí jen v sezóně, do které spadá jeho datum), nebo jako **odhad z nejvyšší naměřené TF** (AP = 80 %, ANP = 90 %; tlačítko „Zjistit z posledních 4 týdnů" ho předvyplní). Jsou-li u všech měření v sezóně vyplněné i tepy při 3 mmol/l, zobrazí se **pět zón** (volné, pod AP, smíšená, pod ANP, anaerobní); jinak tři (aerobní, smíšená, anaerobní). Hodnoty se ukládají jen v tomto prohlížeči, ne v repozitáři. Stahují se tepy po sekundách (jeden požadavek na běh): kalendář jen u zobrazeného cyklu, Plán za celý rok; průběh je vidět v liště. Krátké úseky (do cca 1 min) v zónách nevyniknou a sportovec bez tepu z hodinek se pozná po prvních deseti bězích.
 - Plán je v souboru `plan.json` (objemy z přehledu objemů); pro další rok se přidá další položka do `seasons`.
 
 Týdenní plán v km neexistuje, proto se porovnává po cyklech. Týden bez aktivity může být nemoc, zranění i pauza, z deníku to rozlišit nejde.
@@ -162,3 +162,4 @@ Klikněte na tlačítko **↺ Změnit token** v pravém horním rohu dashboardu.
 | **1.2.1** | 28.10.2026 | Oprava nemocí (NE): berou se ze záznamů nemocí v kalendáři sportovce (od–do), v kalendářním pohledu jsou vidět i dny nemoci bez aktivity. |
 | **1.3.0** | 29.10.2026 | Přechod na sezónu 2026/27. V hlavičce výběr sezóny, který platí pro pohled sportovce, Celkové součty, Sezóny i Plán vs. realita (Sezóny ukazují vybranou sezónu a až tři předchozí). Změna oproti minulé sezóně se počítá jen z dokončených cyklů. |
 | **1.3.1** | 30.10.2026 | Plán objemů pro sezónu 2026/27 (úrovně kasper, emil, simone). |
+| **1.4.0** | 5.11.2026 | Nové rozložení: vlevo Tým a seznam sportovců, vpravo lišta se sezónou a záložkami (Tým: Sezóny, Celkové součty; sportovec: Cykly, Sezóny, Plán vs. realita), sdílená cache logů a tlačítko Obnovit data. Starší sezóny 2022/23–2024/25 v nabídce. Tepové zóny (3 zóny z AP/ANP nebo max TF, 5 zón z laktátu s tepem při 3 mmol/l) v Plánu vs. realita a v kalendáři; kalendář po jednom cyklu s pruhy aktivit rozdělenými podle zón a odkazem do Tréninkáče. |
