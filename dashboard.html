@@ -182,7 +182,9 @@ header {
 .aside-link:hover { background: var(--elevated); color: var(--text); }
 .aside-link.active { background: var(--accent-dim); color: var(--accent); }
 .aside-n { font-weight: 400; color: var(--text-muted); }
-#pane { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+#pane { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; position: relative; }
+#hz-panel { position: absolute; right: 24px; top: 52px; z-index: 50; width: min(660px, calc(100% - 48px)); max-height: calc(100% - 70px); overflow-y: auto; box-shadow: 0 8px 28px rgba(0,0,0,0.45); }
+.pv-ptitle { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
 .subbar {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   padding: 8px 24px; border-bottom: 1px solid var(--border-sub); flex-shrink: 0;
@@ -216,6 +218,10 @@ header {
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .h-btn:hover { color: var(--text-sec); background: var(--elevated); box-shadow: none; }
+.h-btn.zones { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.h-btn.zones:hover { color: var(--accent); background: var(--accent-dim); }
+.hz-status { font-size: 12px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.h-btn.zones.on { background: var(--accent); color: var(--bg); }
 
 /* Body split */
 .body {
@@ -663,49 +669,44 @@ td.num { text-align: right; }
 .view-sw button { background: transparent; color: var(--text-sec); border: 0; padding: 5px 14px; font-size: 12px; cursor: pointer; }
 .view-sw button.on { background: var(--accent-dim); color: var(--accent); }
 .cal-wrap { flex: 1; min-height: 0; padding: 0 24px 40px; overflow-y: auto; }
-.cal-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px; color: var(--text-sec); margin-bottom: 14px; }
+.cal-nav { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.cal-nav button { font-size: 18px; line-height: 1; padding: 4px 12px; }
+.cal-nav button:disabled { opacity: 0.35; cursor: default; }
+.cal-title { display: flex; align-items: baseline; gap: 10px; font-size: 14px; color: var(--text-sec); }
+.cal-title b { color: var(--accent); font-size: 18px; }
+.cal-title b.nz, .cwk.nz { color: var(--alert); }
+.cal-title em { font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
+.cal-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px; color: var(--text-sec); margin-bottom: 10px; }
 .cal-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.cal-legend .cd { display: inline-block; width: 14px; height: 14px; aspect-ratio: auto; }
-.cal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(540px, 100%), 1fr)); gap: 18px; }
-.cal-card { background: var(--surface); border: 1px solid var(--border-sub); border-radius: 8px; padding: 14px 16px 16px; }
-.cal-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; font-size: 14px; color: var(--text-sec); }
-.cal-h b { color: var(--accent); font-size: 17px; }
-.cal-h em { margin-left: auto; font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
-.cal-g { display: grid; grid-template-columns: 34px repeat(7, 1fr) 56px; gap: 5px; align-items: center; }
-.cdow { font-size: 12px; color: var(--text-muted); text-align: center; }
-.cwk { font-size: 12px; color: var(--text-muted); }
-.cwt { font-size: 14px; color: var(--text-sec); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cal-sw { display: inline-block; width: 22px; height: 10px; border-radius: 3px; border: 1px solid transparent; box-sizing: border-box; }
+.cal-sw.oth { background: repeating-linear-gradient(135deg, var(--elevated) 0 3px, var(--week-row) 3px 6px); border-color: var(--border); }
+.cal-sw.nz { border-color: var(--alert); background: transparent; }
+.cal-sw.race { box-shadow: inset 0 0 0 2px var(--race); }
+.cal-sw.sick { width: 9px; height: 9px; border-radius: 50%; background: var(--sick); }
+.cal-g2 { display: grid; grid-template-columns: 40px repeat(7, minmax(0, 1fr)) 64px; gap: 6px; align-items: stretch; }
+.cdow { font-size: 12px; color: var(--text-muted); text-align: center; align-self: center; }
+.cwk { font-size: 12px; color: var(--text-muted); align-self: center; }
+.cwt { font-size: 14px; color: var(--text-sec); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; align-self: center; }
 .cwt .ne { color: var(--sick); font-size: 11px; margin-right: 6px; }
-.cd { position: relative; aspect-ratio: 1; border-radius: 6px; background: var(--week-row); border: 1px solid var(--border-sub); display: flex; flex-direction: column; justify-content: space-between; padding: 4px 6px; box-sizing: border-box; }
-.cd .d { font-size: 12px; color: var(--text-muted); line-height: 1; }
-.cd .k { font-size: 14px; font-weight: 600; color: var(--bg); line-height: 1; text-align: right; font-variant-numeric: tabular-nums; }
-.cd.l1 { background: rgba(5,217,164,0.25); border-color: transparent; }
-.cd.l2 { background: rgba(5,217,164,0.45); border-color: transparent; }
-.cd.l3 { background: rgba(5,217,164,0.7);  border-color: transparent; }
-.cd.l4 { background: var(--accent);        border-color: transparent; }
-.cd.l1 .k, .cd.l2 .k { color: var(--text); }
-.cd.l1 .d, .cd.l2 .d, .cd.l3 .d, .cd.l4 .d { color: rgba(12,18,32,0.7); }
-.cd.l1 .d, .cd.l2 .d { color: var(--text-sec); }
-.cd.other { background: repeating-linear-gradient(135deg, var(--elevated) 0 3px, var(--week-row) 3px 6px); }
-.cd.race { box-shadow: inset 0 0 0 2px var(--race); }
-.cd.sick::after { content: ''; position: absolute; top: 50%; right: 5px; margin-top: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--sick); }
-.cd .pips { position: absolute; top: 5px; right: 5px; display: flex; gap: 3px; align-items: center; }
-.cd .pips i { width: 8px; height: 8px; border-radius: 2px; box-sizing: border-box; border: 1px solid var(--text); }
-.cd .pips i.run { background: var(--text); }
-.cd .pips i.nz  { background: var(--alert); border-color: var(--alert); }
-.cd .pips b { font-size: 11px; line-height: 1; color: var(--text); }
-.cal-legend .pips { position: static; }
-.cd.has { cursor: pointer; }
-.cd.has:hover { filter: brightness(1.25); }
-.cal-h b.nz, .cwk.nz { color: var(--alert); }
-#cal-pop { position: fixed; z-index: 60; background: var(--elevated); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.4); font-size: 12px; max-width: 360px; }
-#cal-pop .ph { color: var(--text-sec); margin-bottom: 6px; }
-#cal-pop .pr { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
-#cal-pop .pr a { color: var(--accent); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
-#cal-pop .pr a:hover { text-decoration: underline; }
-#cal-pop .pk { margin-left: auto; color: var(--text-sec); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.cd.fut { opacity: 0.35; }
-.cd.today { outline: 2px solid var(--text); outline-offset: 1px; }
+.cd2 { position: relative; min-height: 84px; background: var(--week-row); border: 1px solid var(--border-sub); border-radius: 6px; padding: 4px; box-sizing: border-box; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cd2 .d { font-size: 11px; color: var(--text-muted); line-height: 1; padding: 1px 2px 2px; }
+.cd2.fut { opacity: 0.55; }
+.cd2.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.cd2.sick::after { content: ''; position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--sick); }
+.ab { position: relative; display: block; height: 21px; flex-shrink: 0; border-radius: 4px; overflow: hidden; text-decoration: none; background: var(--accent); border: 1px solid transparent; box-sizing: border-box; }
+.ab:hover { filter: brightness(1.18); }
+.ab .az { position: absolute; inset: 0; display: flex; }
+.ab .az i { display: block; height: 100%; min-width: 1px; }
+.ab .at { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 100%; padding: 0 6px; font-size: 11px; color: #0c1220; text-shadow: 0 0 3px rgba(255,255,255,0.55); white-space: nowrap; }
+.ab .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ab .ak { flex-shrink: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ab.l1 { background: rgba(5,217,164,0.25); } .ab.l2 { background: rgba(5,217,164,0.45); }
+.ab.l3 { background: rgba(5,217,164,0.7); }  .ab.l4 { background: var(--accent); }
+.ab.l1 .at, .ab.l2 .at { color: var(--text); text-shadow: none; }
+.ab.oth { background: repeating-linear-gradient(135deg, var(--elevated) 0 3px, var(--week-row) 3px 6px); border-color: var(--border); }
+.ab.oth .at { color: var(--text); text-shadow: none; }
+.ab.nz { border-color: var(--alert); }
+.ab.race { box-shadow: inset 0 0 0 2px var(--race); }
 .pv-chart { margin-bottom: 14px; }
 .pv-legend { margin: 0 0 6px; }
 .pv-sw-bar  { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--accent); }
@@ -784,8 +785,11 @@ td.num { text-align: right; }
         <div class="tabs" id="tabs"></div>
         <span class="sub-name" id="sub-name"></span>
         <div class="flex1"></div>
+        <span class="hz-status" id="hz-status"></span>
+        <button class="h-btn zones" id="btn-zones" title="Tepov&#233; z&#243;ny sportovce" style="display:none">Tepov&#233; z&#243;ny&#8230;</button>
         <button class="h-btn" id="btn-refresh" title="Smazat data na&#269;ten&#225; v t&#233;to relaci a st&#225;hnout znovu">&#8635; Obnovit data</button>
       </div>
+      <div class="sz-card pv-zpanel" id="hz-panel" style="display:none"></div>
       <main id="main">
         <div class="state-box">&#8592; Vyberte sportovce</div>
       </main>

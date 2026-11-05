@@ -438,107 +438,145 @@ function buildActRows(acts, isOpen) {
 
 let detailView = 'table';                    // 'table' | 'cal'
 const CAL_DOW = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
-let calDays = {};                             // date → activities of that day, for the click popover
+const cal = { ci: null };                     // cycle index (0–12) shown by the calendar, kept while switching athletes
+const ACT_URL = id => `https://treninkac.orientacnisporty.cz/activities/training/detail/${id}`;
 
-function calClosePop() { document.getElementById('cal-pop')?.remove(); }
+/* Calendar of one cycle at a time (‹ ›): a bar per activity in every day, a run's bar split by the shares of
+   its heart-rate zones when zones are selected (green otherwise); click opens the activity in Tréninkáč.
+   The page holds an empty #cal-root, calDraw fills it. */
+function calHtml() { return '<div class="cal-wrap" id="cal-root"></div>'; }
 
-/* Popover with a link to every activity of the clicked day (like the links in the table) */
-function calOpenPop(ev, iso) {
-  calClosePop();
-  const acts = calDays[iso] || [];
-  if (!acts.length) return;
-  const pop = szNode('div'); pop.id = 'cal-pop';
-  pop.appendChild(szNode('div', 'ph', fmtDate(iso)));
-  acts.forEach(a => {
-    const row = szNode('div', 'pr');
-    const link = szNode('a', null, a.name);
-    link.href = `https://treninkac.orientacnisporty.cz/activities/training/detail/${a.id}`;
-    link.target = '_blank'; link.rel = 'noopener';
-    const tag = szNode('span', 'sport-tag' + (a.nezp ? ' nezp' : ''),
-      a.nezp ? (sportName(a.sport) ? sportName(a.sport) + ' · ' : '') + 'nezpracováno' : (sportName(a.sport) || 'Nezařazeno'));
-    const km = szNode('span', 'pk', a.dist ? (a.dist / 1000).toFixed(1) + ' km' : (a.movTime ? fmtTime(a.movTime) : ''));
-    row.append(link, tag, km);
-    pop.appendChild(row);
-  });
-  document.body.appendChild(pop);
-  let x = ev.clientX + 10, y = ev.clientY + 10;
-  if (x + pop.offsetWidth  > innerWidth  - 8) x = Math.max(8, innerWidth  - pop.offsetWidth  - 8);
-  if (y + pop.offsetHeight > innerHeight - 8) y = Math.max(8, ev.clientY - pop.offsetHeight - 10);
-  pop.style.left = x + 'px'; pop.style.top = y + 'px';
-}
-document.addEventListener('click', e => { if (!e.target.closest('#cal-pop, .cd.has')) calClosePop(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') calClosePop(); });
-
-function calHtml(uid) {
+function calDraw(uid) {
+  const root = document.getElementById('cal-root');
+  if (!root) return;
+  const my = nav.seq;
   const { cycleData, activsByWeek, sickDates } = state.cache[uid];
   const todayTs = Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
-  const dayKm = {};                                    // date → run km, for the shading scale
-  calDays = {};
-  let maxKm = 0;
-  for (const acts of Object.values(activsByWeek))
-    for (const a of acts) (calDays[a.date] = calDays[a.date] || []).push(a);
-  for (const acts of Object.values(activsByWeek))
-    for (const a of acts) if (isRunSport(a.sport)) {
-      dayKm[a.date] = (dayKm[a.date] || 0) + a.dist / 1000;
-      maxKm = Math.max(maxKm, dayKm[a.date]);
+  if (cal.ci == null) {
+    const wi = Math.floor((todayTs - SEASON_START_TS) / WEEK_MS);
+    cal.ci = Math.max(0, Math.min(CYCLES_PER_YEAR - 1, Math.floor(wi / WEEKS_PER_CYCLE)));
+  }
+  const ci = cal.ci, num = ci + 1;
+  const cd = cycleData.find(c => c.num === num);
+  const mon = weekMonday(ci * WEEKS_PER_CYCLE);
+  const sun = new Date(mon.getTime() + (WEEKS_PER_CYCLE * 7 - 1) * DAY_MS);
+
+  const byDate = {};
+  const runs = [];
+  for (let k = 0; k < WEEKS_PER_CYCLE; k++) {
+    const wk = isoWeekOfTs(SEASON_START_TS + (ci * WEEKS_PER_CYCLE + k) * WEEK_MS).week;
+    for (const a of activsByWeek[`${num}-${wk}`] || []) {
+      (byDate[a.date] = byDate[a.date] || []).push(a);
+      if (isRunSport(a.sport) && !a.nezp) runs.push({ id: a.id, date: a.date, m: a.dist, hasStream: true });
     }
+  }
+  let maxKm = 0;
+  for (const acts of Object.values(activsByWeek)) for (const a of acts) if (isRunSport(a.sport)) maxKm = Math.max(maxKm, a.dist / 1000);
   const lvl = km => km <= 0 ? 0 : Math.min(4, Math.ceil(km / maxKm * 4));
 
-  const cards = Array.from({ length: CYCLES_PER_YEAR }, (_, ci) => {
-    const num = ci + 1;
-    const cd  = cycleData.find(c => c.num === num);
-    const mon = weekMonday(ci * WEEKS_PER_CYCLE);
-    const sun = new Date(mon.getTime() + (WEEKS_PER_CYCLE * 7 - 1) * DAY_MS);
+  const st = hzState(uid);
+  const alive = () => nav.seq === my && cal.ci === ci && document.getElementById('cal-root') === root;
+  let th = null, noSensor = false, failed = 0;
 
-    const weeks = Array.from({ length: WEEKS_PER_CYCLE }, (_, k) => {
-      const wTs  = SEASON_START_TS + (ci * WEEKS_PER_CYCLE + k) * WEEK_MS;
-      const wk   = isoWeekOfTs(wTs).week;
-      const acts = activsByWeek[`${num}-${wk}`] || [];
-      const wd   = cd && cd.weeks[k];
-      const days = CAL_DOW.map((dn, di) => {
-        const ts  = wTs + di * DAY_MS;
-        const d   = new Date(ts);
-        const iso = d.toISOString().slice(0, 10);
-        const da  = acts.filter(a => a.date === iso);
-        const km  = dayKm[iso] || 0;
-        const other = da.some(a => !isRunSport(a.sport));
-        const race  = da.some(a => a.isRace), sick = da.some(a => a.isSick) || !!sickDates?.has(iso), nezp = da.some(a => a.nezp);
-        const sec   = da.reduce((s, a) => s + a.movTime, 0);
-        const cls = ['cd', 'l' + lvl(km), ts > todayTs ? 'fut' : '', ts === todayTs ? 'today' : '',
-                     race ? 'race' : '', sick ? 'sick' : '', nezp ? 'nezp' : '', da.length ? 'has' : '', !km && other ? 'other' : ''].filter(Boolean).join(' ');
-        const tip = `${dn} ${fmtDateObj(d)}` + (da.length
-          ? ` · ${da.length > 1 ? da.length + '× aktivita · ' : ''}${km ? km.toFixed(1) + ' km běh' : 'bez běhu'}${other ? ' · jiný sport' : ''}${sec ? ' · zátěž ' + fmtTime(sec) : ''}${race ? ' · závod' : ''}${sick ? ' · nemoc' : ''}${nezp ? ' · nezpracováno' : ''}${da.length ? ' · klikněte pro odkaz' : ''}`
-          : sick ? ' · nemoc (bez aktivity)' : ' · bez aktivity');
-        const label = d.getUTCDate() === 1 ? `${d.getUTCDate()}.${d.getUTCMonth() + 1}.` : d.getUTCDate();
-        // one pip per activity when a day has several (or an unprocessed one): filled = run, hollow = other sport, red = unprocessed
-        const pips = da.length < 2 && !nezp ? '' : '<span class="pips">' + da.slice(0, 4).map(a =>
-          `<i class="${a.nezp ? 'nz' : isRunSport(a.sport) ? 'run' : 'oth'}"></i>`).join('') + (da.length > 4 ? '<b>+</b>' : '') + '</span>';
-        return `<div class="${cls}" data-date="${iso}" title="${tip}"><span class="d">${label}</span>${pips}<span class="k">${km ? (km < 10 ? km.toFixed(1) : Math.round(km)) : ''}</span></div>`;
-      }).join('');
-      const tot = wd && wd.runDist ? (wd.runDist / 1000).toFixed(0) : '';
-      const ne  = wd && wd.NE ? `<span class="ne" title="dny nemoci v týdnu">NE ${wd.NE}</span>` : '';
-      return `<div class="cwk${wd && wd.hasNezp ? ' nz' : ''}">T${wk}</div>${days}<div class="cwt">${ne}${tot}</div>`;
-    }).join('');
+  function draw(zoned) {
+    root.replaceChildren();
+    const defs = zoned ? PV_ZONE_DEFS[th.n] : null;
 
+    const head = szNode('div', 'cal-nav');
+    const prevB = szNode('button', 'ghost', '‹'), nextB = szNode('button', 'ghost', '›');
+    prevB.title = 'Předchozí cyklus'; nextB.title = 'Další cyklus';
+    prevB.disabled = ci === 0; nextB.disabled = ci === CYCLES_PER_YEAR - 1;
+    prevB.addEventListener('click', () => { cal.ci = ci - 1; calDraw(uid); });
+    nextB.addEventListener('click', () => { cal.ci = ci + 1; calDraw(uid); });
     const sum = cd ? `${(cd.runDist / 1000).toFixed(0)} km · ${fmtTime(cd.zatSec) || '0:00'}` : '—';
-    return `<div class="cal-card">
-      <div class="cal-h"><b${cd && cd.hasNezp ? ' class="nz"' : ''}>C${num}</b><span>${fmtDateObj(mon)} – ${fmtDateObj(sun)}</span><em>${sum}</em></div>
-      <div class="cal-g"><div></div>${CAL_DOW.map(d => `<div class="cdow">${d}</div>`).join('')}<div class="cdow">km</div>${weeks}</div>
-    </div>`;
-  }).join('');
+    const title = szNode('span', 'cal-title');
+    const cb = szNode('b', cd && cd.hasNezp ? 'nz' : null, `C${num}`);
+    title.append(cb, szNode('span', null, `${fmtDateObj(mon)} – ${fmtDateObj(sun)}`), szNode('em', null, sum));
+    head.append(prevB, title, nextB);
+    root.appendChild(head);
 
-  return `<div class="cal-wrap">
-    <div class="cal-legend">
-      <span>běh za den (vůči nejdelšímu dni sportovce${maxKm ? ', ' + maxKm.toFixed(1) + ' km' : ''}):</span>
-      ${[1, 2, 3, 4].map(l => `<i class="cd l${l}"></i>`).join('')}
-      <span><i class="cd other"></i>jiný sport</span>
-      <span><i class="cd race"></i>závod</span>
-      <span><i class="cd sick"></i>nemoc</span>
-      <span><span class="pips"><i class="run"></i><i class="oth"></i><i class="nz"></i></span>čtverečky vpravo nahoře = aktivity dne, když jsou víc nebo nezpracovaná (plná = běh, prázdná = jiný sport, červená = nezpracováno)</span>
-      <span><i class="cd"></i>bez aktivity</span>
-    </div>
-    <div class="cal-grid">${cards}</div>
-  </div>`;
+    /* legend and zone status */
+    const legend = szNode('div', 'cal-legend');
+    const leg = (cls, bg, text) => { const sp = szNode('span'), i = szNode('i', 'cal-sw' + (cls ? ' ' + cls : '')); if (bg) i.style.background = bg; sp.append(i, document.createTextNode(text)); legend.appendChild(sp); };
+    if (zoned) defs.forEach(z => leg('', z.cls, z.hint ? `${z.name} (${z.hint})` : z.name));
+    else leg('', 'var(--accent)', 'běh (tmavší = delší)');
+    leg('oth', null, 'jiný sport'); leg('nz', null, 'nezpracováno'); leg('race', null, 'závod'); leg('sick', null, 'nemoc');
+    root.appendChild(legend);
+    if (st.err) root.appendChild(szNode('p', 'sz-warn', st.err + ' Kalendář je bez zón.'));
+    if (zoned && failed) root.appendChild(szNode('p', 'sz-warn', `U ${failed} běhů se tep nepodařilo načíst, zobrazují se šedě. Zkuste to za chvíli znovu.`));
+    if (zoned && noSensor) root.appendChild(szNode('p', 'sz-warn', 'V ukázce běhů tohoto cyklu není žádný s tepem, ostatní se nestahovaly.'));
+
+    const grid = szNode('div', 'cal-g2');
+    grid.appendChild(szNode('div'));
+    CAL_DOW.forEach(d => grid.appendChild(szNode('div', 'cdow', d)));
+    grid.appendChild(szNode('div', 'cdow', 'km'));
+    for (let k = 0; k < WEEKS_PER_CYCLE; k++) {
+      const wTs = SEASON_START_TS + (ci * WEEKS_PER_CYCLE + k) * WEEK_MS;
+      const wk  = isoWeekOfTs(wTs).week;
+      const wd  = cd && cd.weeks[k];
+      grid.appendChild(szNode('div', 'cwk' + (wd && wd.hasNezp ? ' nz' : ''), 'T' + wk));
+      CAL_DOW.forEach((dn, di) => {
+        const ts = wTs + di * DAY_MS, d = new Date(ts), iso = d.toISOString().slice(0, 10);
+        const da = byDate[iso] || [];
+        const sick = da.some(a => a.isSick) || !!sickDates?.has(iso);
+        const cell = szNode('div', 'cd2' + (ts > todayTs ? ' fut' : '') + (ts === todayTs ? ' today' : '') + (sick ? ' sick' : ''));
+        cell.title = `${dn} ${fmtDateObj(d)}` + (sick ? ' · nemoc' : '');
+        cell.appendChild(szNode('span', 'd', d.getUTCDate() === 1 ? `${d.getUTCDate()}.${d.getUTCMonth() + 1}.` : String(d.getUTCDate())));
+        da.forEach(a => cell.appendChild(calBar(a, defs && th, lvl)));
+        grid.appendChild(cell);
+      });
+      const ne = wd && wd.NE ? szNode('span', 'ne', `NE ${wd.NE}`) : null;
+      const tot = szNode('div', 'cwt');
+      if (ne) { ne.title = 'dny nemoci v týdnu'; tot.appendChild(ne); }
+      tot.appendChild(document.createTextNode(wd && wd.runDist ? (wd.runDist / 1000).toFixed(0) : ''));
+      grid.appendChild(tot);
+    }
+    root.appendChild(grid);
+  }
+
+  hzStatus('');
+  draw(false);
+  if (!st.th) return;
+  th = st.th;
+  (async () => {
+    const todo = runs.filter(r => !pv.zones[r.id]);
+    if (todo.length) {
+      const r = await pvLoadHists(todo, (n, tot) => { if (alive()) hzProgress(n, tot); }, true);
+      if (alive()) hzStatus('');
+      if (!alive()) return;
+      noSensor = r === -1; failed = noSensor ? 0 : r;
+    }
+    draw(true);
+  })();
+}
+
+/* One activity as a wide bar: coloured by zone shares (run + zones), green (run), hatched (other sport) */
+function calBar(a, th, lvl) {
+  const isRun = isRunSport(a.sport);
+  const km = a.dist ? a.dist / 1000 : 0;
+  const bar = szNode('a', 'ab' + (a.nezp ? ' nz' : '') + (a.isRace ? ' race' : '') + (!isRun ? ' oth' : ''));
+  bar.href = ACT_URL(a.id); bar.target = '_blank'; bar.rel = 'noopener';
+  let tip = `${a.name || ''} · ${a.nezp ? 'nezpracováno' : (sportName(a.sport) || 'Nezařazeno')}`;
+  if (isRun && th && !a.nezp) {
+    const z = pvRunZones({ m: a.dist }, pv.zones[a.id], th.cuts(a.date)), defs = PV_ZONE_DEFS[th.n];
+    const tot = z.reduce((x, v) => x + v, 0);
+    const seg = szNode('span', 'az');
+    if (tot > 0) z.forEach((v, k) => {
+      if (!(v > 0)) return;
+      const part = szNode('i'); part.style.flex = String(v); part.style.background = defs[k].cls; seg.appendChild(part);
+      if (v / tot >= 0.01) tip += `\n${defs[k].name}: ${Math.round(v / tot * 100)} %`;
+    });
+    else { const part = szNode('i'); part.style.flex = '1'; part.style.background = 'var(--z0)'; seg.appendChild(part); }
+    bar.appendChild(seg);
+  } else if (isRun) {
+    bar.classList.add('l' + Math.max(1, lvl(km)));
+  }
+  const txt = szNode('span', 'at');
+  txt.append(szNode('span', 'nm', a.name || sportName(a.sport) || 'Aktivita'),
+             szNode('span', 'ak', km ? km.toFixed(1) + ' km' : (a.movTime ? fmtTime(a.movTime) : '')));
+  bar.appendChild(txt);
+  bar.title = tip + (km ? `\n${km.toFixed(1)} km` : '') + '\nklikněte pro otevření v Tréninkáči';
+  return bar;
 }
 
 function renderMain(uid) {
@@ -637,7 +675,7 @@ function renderMain(uid) {
       <button data-v="table" class="${detailView === 'table' ? 'on' : ''}">Tabulka</button>
       <button data-v="cal" class="${detailView === 'cal' ? 'on' : ''}">Kalendář</button>
     </div>
-    ${detailView === 'cal' ? calHtml(uid) : `<div class="table-wrap">
+    ${detailView === 'cal' ? calHtml() : `<div class="table-wrap">
       <table>
         <thead>
           <tr>
@@ -651,9 +689,7 @@ function renderMain(uid) {
       </table>
     </div>`}`);
 
-  document.querySelectorAll('.cd.has').forEach(el =>
-    el.addEventListener('click', e => calOpenPop(e, el.dataset.date))
-  );
+  if (detailView === 'cal') calDraw(uid);
   document.querySelectorAll('.view-sw button').forEach(b =>
     b.addEventListener('click', () => { detailView = b.dataset.v; renderMain(uid); })
   );
@@ -726,12 +762,19 @@ function renderSubbar() {
   }));
   const a = nav.mode === 'athlete' && state.athletes.find(x => x.userId === nav.uid);
   document.getElementById('sub-name').textContent = a ? `${a.lastname} ${a.firstname}` : '';
+  const zb = document.getElementById('btn-zones');
+  zb.style.display = nav.mode === 'athlete' ? '' : 'none';
+  const zOn = nav.mode === 'athlete' && !!hz.on[nav.uid];
+  zb.classList.toggle('on', zOn);
+  zb.textContent = zOn ? 'Tepové zóny ✓' : 'Tepové zóny…';
 }
 
 function render() {
   nav.seq++;
   sz.active = false;
   szHideTip();
+  hzClosePanel();
+  hzStatus('');
   state.selected = nav.mode === 'athlete' ? nav.uid : null;
   renderSidebar();
   renderSubbar();
@@ -767,6 +810,7 @@ function initSeasonPicker() {
 /* Athlete, totals and calendar pages show one training year; Sezóny and Plán span all of them */
 async function switchSeason(i) {
   useSeason(SEASONS[i]);
+  cal.ci = null;
   Object.assign(state, { cache: {}, expCyc: {}, expWk: {} });
   try { await loadRoster(); } catch (e) { setMain(`<div class="state-box"><div class="err-txt">Chyba: ${e.message}</div></div>`); return; }
   if (nav.mode === 'athlete' && !state.athletes.some(a => a.userId === nav.uid)) setMode('team');
@@ -783,6 +827,7 @@ async function connect(token) {
     document.getElementById('setup').style.display = 'none';
     document.getElementById('app').style.display   = 'flex';
     initSeasonPicker();
+    try { const st = await chrome.storage.local.get(['planLevels', 'hrZones']); pv.level = st.planLevels || pv.level; pv.hr = st.hrZones || pv.hr; } catch (_) {}
     state.athletes.forEach(a => prefetchNezp(a.userId));
     render();
   } catch (e) {
@@ -1377,7 +1422,7 @@ async function renderSeasons() {
    with the km actually logged by one athlete this training year. The level
    an athlete trains in is picked here and only remembered in this browser. */
 
-const pv = { plan: null, level: {}, uid: null, cache: {}, runs: {}, hr: {}, zones: {}, pauseUntil: 0, throttled: false };
+const pv = { plan: null, level: {}, uid: null, cache: {}, runs: {}, hr: {}, zones: {}, pend: {}, pauseUntil: 0, throttled: false };
 
 const pvStartTs = s => Date.parse(s.start + 'T00:00:00Z');
 /* "27.10.–23.11.2025" for the cycle with 0-based index c of a season */
@@ -1537,6 +1582,11 @@ function pvRunZones(run, hist, cuts) {
 
 /* Fetch the histograms of all runs not in the session cache yet, 2 requests in parallel
    (the API answers 429 to more). Resolves to the number of runs that failed. */
+/* one request per stream even when the calendar and Plán ask for the same run at once */
+function pvFetchOnce(id) {
+  return pv.pend[id] ||= pvFetchStream(id).finally(() => { delete pv.pend[id]; });
+}
+
 async function pvLoadHists(runs, onProgress, probe = false) {
   const queue = runs.filter(r => r.hasStream && !pv.zones[r.id]);
   const total = queue.length;
@@ -1545,7 +1595,7 @@ async function pvLoadHists(runs, onProgress, probe = false) {
   const worker = async () => {
     while (queue.length) {
       const run = queue.shift();
-      try { pv.zones[run.id] = pvStreamHist((await pvFetchStream(run.id)).results?.data); }
+      try { pv.zones[run.id] = pvStreamHist((await pvFetchOnce(run.id)).results?.data); }
       catch (e) { failed++; }
       onProgress(++done, total);
     }
@@ -1561,7 +1611,7 @@ async function pvLoadHists(runs, onProgress, probe = false) {
     const sw = async () => {
       while (sq.length) {
         const run = sq.shift();
-        try { pv.zones[run.id] = pvStreamHist((await pvFetchStream(run.id)).results?.data); }
+        try { pv.zones[run.id] = pvStreamHist((await pvFetchOnce(run.id)).results?.data); }
         catch (e) { failed++; }
         onProgress(++done, total);
       }
@@ -1632,35 +1682,72 @@ function pvDonut(data) {
   return wrap;
 }
 
-/* Panel under the chart: pick the method, enter the thresholds, then load and show the zones.
-   `alive()` tells whether the page still shows this athlete and year (async renders may be late). */
-function pvZonePanel(box, chartBox, a, S, data, alive) {
-  const cfg  = pv.hr[a.userId] || (pv.hr[a.userId] = { mode: 'lab', maxHr: '', tests: [] });
-  const save = () => chrome.storage.local.set({ hrZones: pv.hr });
-  const plain = chartBox.firstChild;                     // the chart without zones
-  const runs  = pv.runs[S.year + ':' + a.userId] || [];
-  let open = false, shown = false;
+/* ── Zone selection (athlete bar) ───────────────────────────────
+   The thresholds panel lives under the "Tepové zóny" button in the bar above the page. Pressing
+   "Zobrazit zóny" switches zones on for that athlete (session only); then the calendar (one cycle's
+   runs at a time) and Plán vs. realita (the whole year) fetch the streams they need and draw
+   the zones. With zones off, or with thresholds missing for the shown year, both stay green. */
 
-  const toggle = szNode('button', 'ghost', 'Tepové zóny…');
-  const panel  = szNode('div', 'sz-card pv-zpanel');
-  panel.style.display = 'none';
+const hz = { on: {} };                                 // userId → true while zones are selected
+
+function hzCfg(uid) { return pv.hr[uid] || (pv.hr[uid] = { mode: 'lab', maxHr: '', tests: [] }); }
+
+/* { off } | { err } | { th } for the athlete and the shown year */
+function hzState(uid) {
+  if (!hz.on[uid]) return { off: true };
+  const th = pvThresholds(hzCfg(uid), season);
+  return th.err ? { err: th.err } : { th };
+}
+
+/* Running activities of the shown year from the (cached) log: { id, date, wi, m, hasStream } */
+async function hzSeasonRuns(uid) {
+  const raw = await getLog(uid);
+  const runs = [];
+  for (const e of Object.values(raw.results?.data || {})) {
+    const d = (e.startDate || e.date || '').slice(0, 10);
+    if (!d || d < SEASON_START || d > SEASON_END || !isRunSport(e.sport)) continue;
+    runs.push({ id: e.activityId, date: d, wi: weekIndexOf(d), m: e.distance || e.movingDistance || 0, hasStream: e.time != null });
+  }
+  return runs;
+}
+
+/* Progress of the zone loading, shown in the bar next to the button whichever page is open */
+function hzStatus(text) {
+  const el = document.getElementById('hz-status');
+  if (el) el.textContent = text || '';
+}
+const hzProgress = (n, tot) => hzStatus(tot ? `Načítám tepové zóny… ${n} / ${tot} běhů` + (pv.pauseUntil > Date.now() ? ' (server omezuje počet požadavků, chvíli čekám)' : '') : '');
+
+function hzClosePanel() { const el = document.getElementById('hz-panel'); if (el) el.style.display = 'none'; }
+
+function hzTogglePanel() {
+  const el = document.getElementById('hz-panel');
+  if (!el) return;
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  if (nav.mode !== 'athlete') return;
+  hzBuildPanel(nav.uid, el);
+  el.style.display = '';
+}
+
+function hzBuildPanel(uid, panel) {
+  const cfg  = hzCfg(uid);
+  const save = () => chrome.storage.local.set({ hrZones: pv.hr });
+  const alive = () => panel.isConnected && panel.style.display !== 'none' && nav.mode === 'athlete' && nav.uid === uid;
+  panel.replaceChildren();
+  const ath = state.athletes.find(x => x.userId === uid);
+  const title = szNode('div', 'pv-ptitle', `Tepové zóny – ${ath ? ath.lastname + ' ' + ath.firstname : ''} – sezóna ${season.label}`);
   const status = szNode('p', 'sz-note');
-  box.append(toggle, panel);
-  toggle.addEventListener('click', () => {
-    open = !open; panel.style.display = open ? '' : 'none';
-    toggle.textContent = open ? 'Skrýt panel zón' : (shown ? 'Tepové zóny (zobrazeno)' : 'Tepové zóny…');
-  });
 
   /* --- method --- */
   const mk = (value, text) => {
     const l = szNode('label', 'pv-radio'), r = szNode('input');
-    r.type = 'radio'; r.name = 'pv-mode-' + a.userId; r.value = value; r.checked = cfg.mode === value;
+    r.type = 'radio'; r.name = 'pv-mode-' + uid; r.value = value; r.checked = cfg.mode === value;
     r.addEventListener('change', () => { cfg.mode = value; save(); sync(); });
     l.append(r, document.createTextNode(' ' + text));
     return l;
   };
   const methods = szNode('div', 'pv-methods');
-  methods.append(mk('lab', 'a) Z laktátových měření (AP a ANP)'), mk('max', 'b) Odhad z nejvyšší naměřené TF'));
+  methods.append(mk('lab', 'a) Z laktátových měření (AP, 3 mmol/l a ANP)'), mk('max', 'b) Odhad z nejvyšší naměřené TF'));
 
   /* --- a) lactate tests --- */
   const lab  = szNode('div');
@@ -1709,83 +1796,97 @@ function pvZonePanel(box, chartBox, a, S, data, alive) {
   mIn.addEventListener('input', () => { cfg.maxHr = mIn.value; save(); showPrev(); });
   const mrow = szNode('div', 'pv-form');
   mrow.append(szNode('span', null, 'Nejvyšší naměřená TF (tepů/min):'), mIn, auto, prev);
-  mxBox.append(szNode('div', 'sz-note', `Zadejte nejvyšší tep skutečně naměřený při některé aktivitě. AP = ${PV_MAX_AP * 100} %, ANP = ${PV_MAX_ANP * 100} % z něj. Jen hrubý odhad – u dobře trénovaných sportovců bývají laboratorní prahy výš.`), mrow, hint);
+  mxBox.append(szNode('div', 'sz-note', `Zadejte nejvyšší tep skutečně naměřený při některé aktivitě. AP = ${PV_MAX_AP * 100} %, ANP = ${PV_MAX_ANP * 100} % z něj; zobrazí se tři zóny. Jen hrubý odhad – u dobře trénovaných sportovců bývají laboratorní prahy výš.`), mrow, hint);
   showPrev();
   /* prefill from the last 4 weeks of the year shown (ending today, or at the end of a past year) */
-  const winRuns = () => {
+  auto.addEventListener('click', async () => {
     const end = new Date(Math.min(Date.now(), Date.parse(season.end + 'T23:59:59Z')));
     const to = end.toISOString().slice(0, 10), from = new Date(end.getTime() - 27 * DAY_MS).toISOString().slice(0, 10);
-    return { runs: runs.filter(r => r.date >= from && r.date <= to), from, to };
-  };
-  auto.addEventListener('click', async () => {
-    const w = winRuns();
-    const withHr = w.runs.filter(r => r.hasStream);
-    hint.className = 'sz-note';
-    if (!withHr.length) { hint.className = 'sz-warn'; hint.textContent = `V období ${fmtDate2(w.from)} – ${fmtDate2(w.to)} nejsou žádné zpracované běhy.`; return; }
+    hint.className = 'sz-note'; hint.textContent = 'Načítám deník…';
     auto.disabled = true;
+    let withHr;
+    try { withHr = (await hzSeasonRuns(uid)).filter(r => r.date >= from && r.date <= to && r.hasStream); }
+    catch (e) { auto.disabled = false; hint.className = 'sz-warn'; hint.textContent = 'Deník se nepodařilo načíst: ' + e.message; return; }
+    if (!withHr.length) { auto.disabled = false; hint.className = 'sz-warn'; hint.textContent = `V období ${fmtDate2(from)} – ${fmtDate2(to)} nejsou žádné zpracované běhy.`; return; }
     const failed = await pvLoadHists(withHr, (n, tot) => { if (alive()) hint.textContent = tot ? `Načítám tep z posledních 4 týdnů… ${n} / ${tot} běhů` : ''; });
     auto.disabled = false;
     if (!alive()) return;
     const mx = pvMaxHr(withHr);
-    if (!mx) { hint.className = 'sz-warn'; hint.textContent = `V období ${fmtDate2(w.from)} – ${fmtDate2(w.to)} nemají běhy tepová data.`; return; }
+    if (!mx) { hint.className = 'sz-warn'; hint.textContent = `V období ${fmtDate2(from)} – ${fmtDate2(to)} nemají běhy tepová data.`; return; }
     mIn.value = cfg.maxHr = mx; save(); showPrev();
-    hint.textContent = `Nejvyšší tep za ${fmtDate2(w.from)} – ${fmtDate2(w.to)}: ${mx} (ojedinělé špičky kratší než 5 s se nepočítají)` +
+    hint.textContent = `Nejvyšší tep za ${fmtDate2(from)} – ${fmtDate2(to)}: ${mx} (ojedinělé špičky kratší než 5 s se nepočítají)` +
       (failed ? `; ${failed} běhů se nepodařilo načíst, hodnota může být nižší` : '') + '. Ověřte a případně upravte.';
   });
-  /* --- actions --- */
-  const go   = szNode('button', null, 'Načíst a zobrazit zóny');
-  const hide = szNode('button', 'ghost', 'Zobrazit bez zón');
-  hide.style.display = 'none';
-  const actions = szNode('div', 'pv-form');
-  actions.append(go, hide);
 
+  /* --- actions --- */
   function sync() {
     lab.style.display = cfg.mode === 'lab' ? '' : 'none';
     mxBox.style.display = cfg.mode === 'max' ? '' : 'none';
   }
-  function plainView() { shown = false; chartBox.replaceChildren(plain); hide.style.display = 'none'; go.textContent = 'Načíst a zobrazit zóny'; status.textContent = ''; toggle.textContent = open ? 'Skrýt panel zón' : 'Tepové zóny…'; }
-  hide.addEventListener('click', plainView);
-
-  let probeNext = true;               // after a probe found no heart rate, the next press fetches every run
-  go.addEventListener('click', async () => {
+  const go  = szNode('button', null, hz.on[uid] ? 'Použít změněné zóny' : 'Zobrazit zóny');
+  const off = szNode('button', 'ghost', 'Vypnout zóny');
+  off.style.display = hz.on[uid] ? '' : 'none';
+  const actions = szNode('div', 'pv-form');
+  actions.append(go, off);
+  go.addEventListener('click', () => {
     const th = pvThresholds(cfg, season);
     if (th.err) { status.className = 'sz-warn'; status.textContent = th.err; return; }
-    status.className = 'sz-note';
-    go.disabled = true;
-    let failed = await pvLoadHists(runs, (n, tot) => {
-      if (alive()) status.textContent = tot ? `Načítám tepové zóny… ${n} / ${tot} běhů` + (pv.pauseUntil > Date.now() ? ' (server omezuje počet požadavků, chvíli čekám)' : '') : '';
-    }, probeNext);
-    go.disabled = false;
-    if (!alive()) return;
-    const noSensor = failed === -1;
-    if (noSensor) failed = 0;
-    probeNext = !noSensor;
-    const defs = PV_ZONE_DEFS[th.n];
-    data.zd = defs;
-    data.forEach(d => { d.zk = Array(defs.length).fill(0); });
-    runs.forEach(r => {
-      const z = pvRunZones(r, pv.zones[r.id], th.cuts(r.date)), ci = Math.floor(r.wi / WEEKS_PER_CYCLE);
-      if (data[ci]) z.forEach((v, k) => { data[ci].zk[k] += v; });
-    });
-    const hrKm = data.reduce((t, d) => t + d.zk.slice(0, th.n).reduce((a, v) => a + v, 0), 0);
-    if (!(hrKm > 0)) { status.className = 'sz-warn'; status.textContent = noSensor ? `V ukázce ${PV_PROBE} běhů z celého roku není žádný s tepem, ostatní se nestahovaly. Zóny nelze zobrazit. Kdyby měl tep jen u několika běhů, stiskněte tlačítko znovu: projdou se všechny (${runs.filter(r => r.hasStream).length} požadavků).` : 'Aktivity sportovce neobsahují tepová data, zóny nelze zobrazit.'; return; }
-    status.textContent = '';
-    const nn = [
-      szNode('p', 'sz-note', `Zóny (tep/min): ${th.label}. ` + (th.n === 5
-        ? 'Hranice: AP, 3 mmol/l a ANP z měření; spodní hranice zóny „pod AP“ je AP minus rozdíl mezi 3 mmol/l a AP.'
-        : 'Aerobní = pod AP, smíšená = AP až ANP, anaerobní = nad ANP.')),
-      szNode('p', 'sz-note', 'Pozor: tep reaguje se zpožděním, takže krátké úseky (zhruba pod 1 minutu) v zónách nevyniknou a čas rychlého úseku se zčásti započítá do nižší zóny. ' +
-        'Podíly dobře ukazují strukturu objemu, ne splnění jednotlivého intervalového tréninku.')
-    ];
-    if (failed) nn.push(szNode('p', 'sz-warn', `U ${failed} běhů se tep nepodařilo načíst, jsou započítány jako „bez tepu". Zkuste to za chvíli znovu.`));
-    shown = true;
-    chartBox.replaceChildren(pvChart(S, data, true), pvDonut(data), ...nn);
-    hide.style.display = ''; go.textContent = 'Přepočítat zóny';
-    toggle.textContent = open ? 'Skrýt panel zóny' : 'Tepové zóny (zobrazeno)';
+    hz.on[uid] = true; hzClosePanel(); render();
   });
+  off.addEventListener('click', () => { hz.on[uid] = false; hzClosePanel(); render(); });
+  const close = szNode('button', 'ghost', 'Zavřít'); close.addEventListener('click', hzClosePanel);
+  actions.append(close);
 
-  panel.append(methods, lab, mxBox, actions, status);
+  panel.append(title, methods, lab, mxBox, actions, status,
+    szNode('p', 'sz-note', 'Zóny se načítají jen u zobrazeného cyklu (kalendář) nebo roku (Plán vs. realita), jeden požadavek na běh. Změna prahů nic nestahuje znovu.'));
   sync(); drawTests();
+}
+
+/* Plán vs. realita: with zones selected, fetch the year's streams and replace the plain chart by the
+   zoned one plus a donut. `probe`: stop early for athletes without a heart-rate sensor. */
+async function pvPlanZones(box, chartBox, a, S, data, alive, probe = true) {
+  box.replaceChildren();
+  const st = hzState(a.userId);
+  if (st.off) return;
+  if (st.err) { box.appendChild(szNode('p', 'sz-warn', st.err + ' Zobrazuje se graf bez zón.')); return; }
+  const th = st.th, runs = pv.runs[S.year + ':' + a.userId] || [];
+  const status = szNode('p', 'sz-note');
+  box.appendChild(status);
+  let failed = await pvLoadHists(runs, (n, tot) => { if (alive()) hzProgress(n, tot); }, probe);
+  if (alive()) hzStatus('');
+  if (!alive()) return;
+  const noSensor = failed === -1;
+  if (noSensor) failed = 0;
+  const defs = PV_ZONE_DEFS[th.n];
+  data.zd = defs;
+  data.forEach(d => { d.zk = Array(defs.length).fill(0); });
+  runs.forEach(r => {
+    const z = pvRunZones(r, pv.zones[r.id], th.cuts(r.date)), ci = Math.floor(r.wi / WEEKS_PER_CYCLE);
+    if (data[ci]) z.forEach((v, k) => { data[ci].zk[k] += v; });
+  });
+  const hrKm = data.reduce((t, d) => t + d.zk.slice(0, th.n).reduce((x, v) => x + v, 0), 0);
+  if (!(hrKm > 0)) {
+    status.className = 'sz-warn';
+    status.replaceChildren(document.createTextNode(noSensor
+      ? `V ukázce ${PV_PROBE} běhů z celého roku není žádný s tepem, ostatní se nestahovaly. Zóny nelze zobrazit. `
+      : 'Aktivity sportovce neobsahují tepová data, zóny nelze zobrazit. '));
+    if (noSensor) {
+      const all = szNode('button', 'ghost', `Projít všechny běhy (${runs.filter(r => r.hasStream).length} požadavků)`);
+      all.addEventListener('click', () => pvPlanZones(box, chartBox, a, S, data, alive, false));
+      status.appendChild(all);
+    }
+    return;
+  }
+  status.textContent = '';
+  const nn = [
+    szNode('p', 'sz-note', `Zóny (tep/min): ${th.label}. ` + (th.n === 5
+      ? 'Hranice: AP, 3 mmol/l a ANP z měření; spodní hranice zóny „pod AP“ je AP minus rozdíl mezi 3 mmol/l a AP.'
+      : 'Aerobní = pod AP, smíšená = AP až ANP, anaerobní = nad ANP.')),
+    szNode('p', 'sz-note', 'Pozor: tep reaguje se zpožděním, takže krátké úseky (zhruba pod 1 minutu) v zónách nevyniknou a čas rychlého úseku se zčásti započítá do nižší zóny. ' +
+      'Podíly dobře ukazují strukturu objemu, ne splnění jednotlivého intervalového tréninku.')
+  ];
+  if (failed) nn.push(szNode('p', 'sz-warn', `U ${failed} běhů se tep nepodařilo načíst, jsou započítány jako „bez tepu". Zkuste to za chvíli znovu.`));
+  chartBox.replaceChildren(pvChart(S, data, true), pvDonut(data), ...nn);
 }
 
 /* Planned (line) vs. actual (bars) km per cycle; one axis, both in km.
@@ -1999,7 +2100,7 @@ async function renderPlan() {
     chartBox.appendChild(pvChart(S, data));
     const zoneBox = szNode('div', 'pv-zbox');
     out.replaceChildren(chartBox, zoneBox, sum, wrap, footer);
-    pvZonePanel(zoneBox, chartBox, a, S, data, () => pv.uid === a.userId && planSeason() === S && sz.active && my === nav.seq);
+    pvPlanZones(zoneBox, chartBox, a, S, data, () => pv.uid === a.userId && planSeason() === S && sz.active && my === nav.seq);
   }
 
   root.append(bar, out);
@@ -2054,6 +2155,8 @@ document.getElementById('nav-team').addEventListener('click', e => {
   if (nav.mode === 'athlete') setMode('team');
 });
 
+document.getElementById('btn-zones').addEventListener('click', () => { if (state.token) hzTogglePanel(); });
+
 document.getElementById('btn-refresh').addEventListener('click', () => { if (state.token) refreshData(); });
 
 document.getElementById('btn-reset').addEventListener('click', async () => {
@@ -2061,6 +2164,7 @@ document.getElementById('btn-reset').addEventListener('click', async () => {
   Object.assign(state, { token: null, athletes: [], selected: null, cache: {}, expCyc: {}, expWk: {} });
   Object.assign(sz, { active: false, roster: null, agg: {}, sel: null });
   Object.assign(pv, { uid: null, cache: {} });
+  hz.on = {}; cal.ci = null;
   useSeason(SEASONS.filter(s => s.start <= new Date().toISOString().slice(0, 10)).pop() || SEASONS[0]);
   for (const k of Object.keys(logCache)) delete logCache[k];
   Object.assign(nav, { mode: 'team', tab: 'seasons', uid: null, last: { team: 'seasons', athlete: 'cycles' } });
